@@ -33,8 +33,8 @@ make docker-down
   the full journey from the raw reference file to a `fraud-score` response,
   with diagrams, written for readers with zero vector-search background.
 - [**Architecture & infra decisions**](docs/INFRASTRUCTURE.md) —
-  topology, resource budget, the Dockerfile explained, and why this isn't a
-  bit-mining exercise.
+  topology, resource budget, the Dockerfile explained, and the trade-offs
+  behind each choice.
 - [**How to run**](docs/HOW_TO_RUN.md) — local dev, Docker, tests,
   load testing, configuration.
 - [**Running from the published image only**](docs/RUNNING_FROM_GHCR.md) —

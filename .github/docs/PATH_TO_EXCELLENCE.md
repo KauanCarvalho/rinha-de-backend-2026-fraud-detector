@@ -1,6 +1,6 @@
 # Path to a 6000-point score
 
-[`RESULTS.md`](RESULTS.md#why-the-winning-solutions-score-close-to-the-6000-point-ceiling)
+[`RESULTS.md`](RESULTS.md#the-6000-point-ceiling)
 shows the scoring formula and where this project actually lands
 (`final_score` in the **+660 to +1497** range depending on host
 contention outside this project's own containers — the spread is
@@ -9,9 +9,9 @@ Detection is no longer the bottleneck; p99 is. This document is the
 follow-up to the obvious next question: **what would it actually take to
 close the rest of the gap?** Not as a to-do list this project intends to
 execute — that would contradict the whole premise in
-[`INFRASTRUCTURE.md`](INFRASTRUCTURE.md#why-this-isnt-a-bit-mining-exercise)
-— but as an honest, itemized answer, so "the winners over-engineered it"
-isn't left as a vague hand-wave.
+[`INFRASTRUCTURE.md`](INFRASTRUCTURE.md#design-philosophy)
+— but as an honest, itemized answer, so the gap isn't left as a vague
+hand-wave.
 
 ## The math, restated
 
@@ -35,16 +35,18 @@ exactly what the notes below found out empirically.
 
 Below is what's left on the list, in order of the return it buys.
 
-> **Note:** an earlier version of this list had "stop allocating on the hot
-> path" here — pre-rendered response bodies, a `sync.Pool`'d request buffer,
-> and `debug.SetGCPercent(-1)`. That one turned out not to require the
+> [!NOTE]
+> An earlier version of this list had "stop allocating on the hot path"
+> here — pre-rendered response bodies, a `sync.Pool`'d request buffer, and
+> `debug.SetGCPercent(-1)`. That one turned out not to require the
 > maintainability trade-off the rest of this document is about: this API's
 > response space is exactly 6 fixed JSON bodies, so pre-rendering them is a
 > free win, not a readability sacrifice. All three are implemented — see
 > [`RESULTS.md`](RESULTS.md#low-risk-optimizations-pre-rendered-responses-buffer-pooling-gc-tuning)
 > for what they measurably bought (p99 −7.8%, http_errors −46%).
 
-> **Note:** categorical-tag partitioning is also implemented
+> [!NOTE]
+> Categorical-tag partitioning is also implemented
 > (`internal/knn.Tag`/`PartitionedIndex`) — reference vectors are split
 > into up to 16 buckets by four already-boolean dimensions
 > (card_present, is_online, unknown_merchant, has-last-transaction) before
@@ -52,12 +54,13 @@ Below is what's left on the list, in order of the return it buys.
 > bucket. Pure data partitioning, no assembly, no custom event loop. See
 > [`RESULTS.md`](RESULTS.md#categorical-tag-partitioning) for the numbers.
 
-> **Note:** what used to be item 3 here — replacing the k-d tree with an
-> IVF index — is also done, and turned out to be the single biggest win in
-> this project's entire history: `final_score` went from the low hundreds
-> to four figures. `internal/knn` no longer contains a k-d tree at all —
-> see [`RESULTS.md`](RESULTS.md#replacing-the-k-d-tree-with-ivf) for the
-> full story, including two other ideas (search escalation, partition
+> [!TIP]
+> What used to be item 3 here — replacing the k-d tree with an IVF index —
+> is also done, and turned out to be the single biggest win in this
+> project's entire history: `final_score` went from the low hundreds to
+> four figures. `internal/knn` no longer contains a k-d tree at all — see
+> [`RESULTS.md`](RESULTS.md#replacing-the-k-d-tree-with-ivf) for the full
+> story, including two other ideas (search escalation, partition
 > rebalancing) that looked promising and made things *worse* in practice
 > before IVF was tried.
 
@@ -80,10 +83,10 @@ and write the response directly as bytes.
 **Cost:** every protocol edge case `net/http` handles for you (malformed
 requests, slow-loris clients, header size limits, timeouts) becomes code
 you have to write and maintain yourself. This is the single largest
-"bit-mining" investment on the list — most of the winning repos' custom
-epoll loops live here. With detection quality now solved, this is also
-the most obviously impactful item left: p99 is the entire remaining gap,
-and this is the layer between the NIC and the search that costs the most.
+low-level investment on the list. With detection quality now solved, this
+is also the most obviously impactful item left: p99 is the entire
+remaining gap, and this is the layer between the NIC and the search that
+costs the most.
 
 ## 2. SIMD the distance computation
 
@@ -111,10 +114,10 @@ its own this buys less than #1.
 
 **What it means:** HAProxy is general-purpose — TLS termination, HTTP
 parsing, ACLs, and a config language this project never uses beyond plain
-round-robin. Some winning solutions replace it with a purpose-built proxy
-in C or Rust that does only `accept()` → pick a backend → forward bytes,
-sometimes using `SCM_RIGHTS` to hand an accepted file descriptor directly
-to a worker process instead of proxying every byte through userspace.
+round-robin. A purpose-built proxy in C or Rust that does only `accept()`
+→ pick a backend → forward bytes — optionally using `SCM_RIGHTS` to hand
+an accepted file descriptor directly to a worker process instead of
+proxying every byte through userspace — would shave off that overhead.
 
 **What to do, if pursued:** a minimal round-robin dispatcher using raw
 sockets and `SCM_RIGHTS` fd-passing.
@@ -131,12 +134,11 @@ risk with no functional upside beyond shaving microseconds.
 Every item above trades a specific piece of Go's ordinary safety net
 (`net/http`'s protocol handling, a stable public API, a battle-tested
 proxy) for latency headroom this challenge's scoring formula rewards on a
-logarithmic curve. That trade is legitimate engineering — it is exactly
-what the winning repos did, and the reasoning above should make clear it
-is not "cheating" or unfair, just a different set of priorities. This
-project's stated goal from the start was a production-shaped, maintainable
-Go service, not a maximum-score entry in a closed competition — see
-[`INFRASTRUCTURE.md`](INFRASTRUCTURE.md#why-this-isnt-a-bit-mining-exercise).
+logarithmic curve. That trade is legitimate engineering, and the reasoning
+above should make clear it is not "cheating" or unfair, just a different
+set of priorities. This project's stated goal from the start was a
+production-shaped, maintainable Go service, not a maximum-score entry in a
+closed competition — see [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md#design-philosophy).
 The gap between four figures and `+6000` is now fully measured and
 explained rather than mysterious — and, notably, it is now a *latency*
 gap, not a *detection* gap: closing it further is a rewrite into a

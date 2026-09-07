@@ -1,19 +1,54 @@
 # Results
 
-What actually happened when this got built and measured — not projections.
-Everything here was run locally against the real containerized stack
-(`docker-compose.yml`), under the challenge's resource budget (1 CPU /
-350MB total), using the official k6 scripts vendored under
-[`loadtest/`](../../loadtest). See [`HOW_TO_RUN.md`](HOW_TO_RUN.md) to
-reproduce any of it yourself.
+What actually happened when this got built and measured — not
+projections. Everything here was run locally against the real
+containerized stack (`docker-compose.yml`), under the challenge's
+resource budget (1 CPU / 350MB total), using the official k6 scripts
+vendored under [`loadtest/`](../../loadtest). See
+[`HOW_TO_RUN.md`](HOW_TO_RUN.md) to reproduce any of it yourself.
+
+## At a glance
+
+Six changes, measured end to end each time, moved `final_score` from deep
+negative to four figures:
+
+| # | Change | `final_score` after |
+|---|---|---:|
+| 0 | Baseline: wrong (1M) reference dataset | −3324.9 |
+| 1 | Correct 3,000,000-vector dataset | −203.6 |
+| 2 | Pre-rendered responses, buffer pooling, GC tuning | −155.9 |
+| 3 | Categorical-tag partitioning | +42.7 |
+| 4 | Re-tuned search budget | +214.5 |
+| 5 | **IVF replacing the k-d tree entirely** | **+660 to +1497** |
+
+The last row is a range, not a typo — see
+[Full load test, `nprobe` swept](#full-load-test-nprobe-swept) for why.
+Two other ideas were tried and measured between rows 4 and 5
+(confidence-based search escalation, partition rebalancing by amount);
+both looked good on paper and made things worse for real — see
+[Replacing the k-d tree with IVF](#replacing-the-k-d-tree-with-ivf) for
+what happened and why they were reverted rather than kept.
+
+### Jump to a section
+
+[Correctness](#correctness-decoupled-from-load) ·
+[The dataset](#the-dataset-it-really-is-3000000-vectors) ·
+[k-d tree history](#in-process-k-d-tree-why-a-search-budget-exists-at-3m-vectors) ·
+[Low-risk optimizations](#low-risk-optimizations-pre-rendered-responses-buffer-pooling-gc-tuning) ·
+[Categorical-tag partitioning](#categorical-tag-partitioning) ·
+[Replacing the k-d tree with IVF](#replacing-the-k-d-tree-with-ivf) ·
+[Smoke test](#smoke-test-official-loadtestsmokejs-1-vu-5-requests) ·
+[The 6000-point ceiling](#the-6000-point-ceiling) ·
+[The trade-off, stated plainly](#the-trade-off-stated-plainly)
 
 ## Correctness, decoupled from load
 
 Before any load testing, the two fully worked examples from
 `docs/en/DETECTION_RULES.md` (a legitimate transaction and a fraudulent
-one) are reproduced exactly end to end — vectorization, k-d tree search,
-and scoring — both as Go tests (`internal/vectorize`, `internal/detector`)
-and against the running containerized API with the real dataset:
+one) are reproduced exactly end to end — vectorization, nearest-neighbor
+search, and scoring — both as Go tests (`internal/vectorize`,
+`internal/detector`) and against the running containerized API with the
+real dataset:
 
 | case | expected | got |
 |---|---|---|
@@ -56,6 +91,7 @@ just moved out of `main`'s current tree.)
 
 ## In-process k-d tree: why a search budget exists, at 3M vectors
 
+> [!IMPORTANT]
 > **Superseded.** The k-d tree described in this section and the next was
 > later replaced entirely by an IVF index — see
 > [Replacing the k-d tree with IVF](#replacing-the-k-d-tree-with-ivf)
@@ -163,6 +199,7 @@ improvement:
 
 ## Categorical-tag partitioning
 
+> [!NOTE]
 > **The partitioning described here is still exactly how the index is
 > organized today** — only what each partition holds internally later
 > changed, from a k-d tree to an IVF index (see
@@ -171,23 +208,22 @@ improvement:
 > `KNN_NPROBE` and re-tuned again for IVF — the final, current value is in
 > that section, not here.
 
-A comparison Go solution ([abeswz/gopher-fraud-detection](https://github.com/abeswz/gopher-fraud-detection))
-splits its 3M-vector reference set into partitions by a 4-bit tag before
-doing any distance-based search at all. Four of this project's 14
-dimensions are already boolean-valued or have a sentinel for "absent": `is_online`,
-`card_present`, `unknown_merchant`, and whether `last_transaction` was
-present. A mismatch on any one of them contributes roughly `Scale²` to a
-squared-distance sum — larger than the combined contribution of every
-continuous dimension being merely "close" — so two vectors with different
-tags are rarely each other's true nearest neighbors. `internal/knn.Tag`
-computes this 4-bit tag from a vector's own dimensions (no extra metadata
-needed), and `internal/knn.PartitionedIndex` builds one k-d tree per
-non-empty tag (12 non-empty partitions out of 16 possible, on the real 3M
-dataset — matching the comparison repo's own reported partition count
-exactly) instead of one 3M-vector tree. A query is routed to its own
-partition's tree; the rare case of a query tag with zero matching reference
-vectors falls back to searching every partition and merging results, so
-correctness never regresses below the unpartitioned index.
+The idea: split the 3M-vector reference set into partitions by a coarse
+tag before doing any distance-based search at all. Four of this project's
+14 dimensions are already boolean-valued or have a sentinel for "absent":
+`is_online`, `card_present`, `unknown_merchant`, and whether
+`last_transaction` was present. A mismatch on any one of them contributes
+roughly `Scale²` to a squared-distance sum — larger than the combined
+contribution of every continuous dimension being merely "close" — so two
+vectors with different tags are rarely each other's true nearest
+neighbors. `internal/knn.Tag` computes this 4-bit tag from a vector's own
+dimensions (no extra metadata needed), and `internal/knn.PartitionedIndex`
+builds one k-d tree per non-empty tag (12 non-empty partitions out of 16
+possible, on the real 3M dataset) instead of one 3M-vector tree. A query
+is routed to its own partition's tree; the rare case of a query tag with
+zero matching reference vectors falls back to searching every partition
+and merging results, so correctness never regresses below the
+unpartitioned index.
 
 Offline (same 50,000 labeled requests, `KNN_MAX_EXTRA_LEAVES` swept):
 
@@ -347,7 +383,7 @@ http_req_duration: avg=3.25ms  p90=6.92ms  p95=7.11ms  max=7.3ms
 http_req_failed:   0.00%
 ```
 
-## Why the winning solutions score close to the 6000-point ceiling
+## The 6000-point ceiling
 
 `docs/en/EVALUATION.md` gives the exact formula:
 
@@ -370,13 +406,14 @@ Sustaining sub-millisecond p99 at 1200 req/s on 0.475 vCPU per replica
 means the per-request compute budget is a fraction of a millisecond
 end-to-end, including network I/O — there is no room left for Go's
 `net/http` request lifecycle or garbage collection pauses, regardless of
-how good the search structure underneath them is. The [inspiration repos](INFRASTRUCTURE.md#why-this-isnt-a-bit-mining-exercise)
-that won this edition get there with a hand-rolled `epoll` event loop, a
-custom C load balancer using `SCM_RIGHTS` fd-passing, AVX2 SIMD distance
-calculations, `GC` disabled outright, and `logging: none` — every one of
-those choices exists specifically to erase overhead between the NIC and
-the distance computation. It is a different regime of engineering, not a
-more-careful version of this one.
+how good the search structure underneath them is. Reaching it would take
+a hand-rolled `epoll` event loop, a custom load balancer using
+`SCM_RIGHTS` fd-passing, SIMD distance calculations, `GC` disabled
+outright, and no logging at all — every one of those choices exists
+specifically to erase overhead between the NIC and the distance
+computation. See [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md#design-philosophy)
+for why this project chooses not to go there — it is a different regime
+of engineering, not a more-careful version of this one.
 
 ## The trade-off, stated plainly
 

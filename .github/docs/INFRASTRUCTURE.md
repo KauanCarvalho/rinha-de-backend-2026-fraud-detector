@@ -3,33 +3,29 @@
 What this is built out of, and why — including the trade-off the whole
 project is built around.
 
-## Why this isn't a bit-mining exercise
+## Design philosophy
 
-Both public reference solutions for this challenge —
-[`rafaelcoelhox/detecta-fraude`](https://github.com/rafaelcoelhox/detecta-fraude)
-(the edition's winner) and its fork,
-[`lucasmontano/rinha-backend-2026-detecta-fraude`](https://github.com/lucasmontano/rinha-backend-2026-detecta-fraude) —
-are Rust + hand-written C: a custom `epoll` event loop, a load balancer that
-passes accepted socket file descriptors between processes via `SCM_RIGHTS`,
-a partitioned k-d tree with AVX2 SIMD distance calculations, and
-`logging: none` in the compose file.
+This challenge is scored on raw latency and detection accuracy, which
+rewards squeezing out every possible nanosecond — hand-rolled event loops,
+kernel-bypass networking, SIMD assembly, no garbage collector, no logging.
+That's a legitimate way to chase the top of a latency-scored leaderboard.
+It's also not how most production Go services get built, and it trades
+away exactly the things a team maintaining this code for years would want:
+readable request handlers, structured logs, a standard project layout, and
+a test suite.
 
-That's a legitimate way to win a latency-scored competition. It's also not
-how most production Go services get built, and it trades away exactly the
-things a team maintaining this code for years would want: readable request
-handlers, structured logs, a standard project layout, and a test suite.
-This repo makes the opposite trade explicit:
+This repo deliberately makes the opposite trade:
 
-| | inspiration repos | this repo |
+| | maximum-score approach | this repo |
 |---|---|---|
-| language | Rust + C | Go (stdlib only for HTTP) |
-| networking | custom `epoll`, fd-passing LB | `net/http`, HAProxy (plain round-robin) |
-| NN search | partitioned k-d tree, AVX2 SIMD | categorical partitioning + IVF, pure Go |
-| observability | `logging: none` | structured JSON logs (`log/slog`), request IDs |
-| project shape | single crate, hand-rolled binary format | `cmd/` + `internal/`, table-driven tests, CI, lint |
+| networking | custom event loop, kernel bypass | `net/http`, HAProxy (plain round-robin) |
+| NN search | hand-tuned, SIMD/assembly | categorical partitioning + IVF, pure Go |
+| observability | none (every byte of overhead removed) | structured JSON logs (`log/slog`), request IDs |
+| project shape | single binary, hand-rolled formats | `cmd/` + `internal/`, table-driven tests, CI, lint |
 
 Measured results of that trade — what it costs, what it doesn't — are in
-[`RESULTS.md`](RESULTS.md).
+[`RESULTS.md`](RESULTS.md), including [`PATH_TO_EXCELLENCE.md`](PATH_TO_EXCELLENCE.md)'s
+honest accounting of exactly what closing the remaining gap would require.
 
 ## Topology
 
