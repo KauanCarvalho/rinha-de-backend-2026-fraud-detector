@@ -47,7 +47,7 @@ func run(logger *slog.Logger, inputPath, outputPath string, leafSize int) error 
 	logger.Info("references loaded", "count", len(vectors), "elapsed", time.Since(start))
 
 	buildStart := time.Now()
-	idx := knn.Build(vectors, labels, leafSize)
+	idx := knn.BuildPartitioned(vectors, labels, leafSize)
 	logger.Info("index built", "leaf_size", leafSize, "elapsed", time.Since(buildStart))
 
 	saveStart := time.Now()

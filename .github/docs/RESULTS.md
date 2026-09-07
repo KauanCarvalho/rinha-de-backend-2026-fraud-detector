@@ -152,6 +152,58 @@ improvement:
 | failure_rate | 5.32% | **5.27%** | ~flat (as expected — this doesn't touch detection) |
 | final_score | −203.6 | **−155.9** | +23% |
 
+## Categorical-tag partitioning
+
+A comparison Go solution ([abeswz/gopher-fraud-detection](https://github.com/abeswz/gopher-fraud-detection))
+splits its 3M-vector reference set into partitions by a 4-bit tag before
+doing any distance-based search at all. Four of this project's 14
+dimensions are already boolean-valued or have a sentinel for "absent": `is_online`,
+`card_present`, `unknown_merchant`, and whether `last_transaction` was
+present. A mismatch on any one of them contributes roughly `Scale²` to a
+squared-distance sum — larger than the combined contribution of every
+continuous dimension being merely "close" — so two vectors with different
+tags are rarely each other's true nearest neighbors. `internal/knn.Tag`
+computes this 4-bit tag from a vector's own dimensions (no extra metadata
+needed), and `internal/knn.PartitionedIndex` builds one k-d tree per
+non-empty tag (12 non-empty partitions out of 16 possible, on the real 3M
+dataset — matching the comparison repo's own reported partition count
+exactly) instead of one 3M-vector tree. A query is routed to its own
+partition's tree; the rare case of a query tag with zero matching reference
+vectors falls back to searching every partition and merging results, so
+correctness never regresses below the unpartitioned index.
+
+Offline (same 50,000 labeled requests, `KNN_MAX_EXTRA_LEAVES` swept):
+
+| budget | unpartitioned failure_rate | partitioned failure_rate |
+|---|---|---|
+| exact (`0`) | 0.00% | 0.00% |
+| `500` | 16.25% | **3.65%** |
+| `2000` | 10.28% | **1.82%** |
+| `5000` | ~5.3%\* | **1.11%** |
+| `8000` | 4.21% | **1.11%** (identical to `5000` — search already saturates before spending the full budget) |
+
+\* `5000` unpartitioned was only measured end-to-end via the real load test
+(see the table above), not this offline sweep directly.
+
+Full load test, `KNN_MAX_EXTRA_LEAVES=5000` unchanged, partitioned index:
+
+| | before (unpartitioned) | after (partitioned) | change |
+|---|---|---|---|
+| p99 | 1174.5ms | 1644.6ms | +40% (worse) |
+| http_errors | 25 | 321 | worse |
+| failure_rate | 5.27% | **1.68%** | −68% |
+| detection_score | −86.0 | **+258.8** | positive for the first time |
+| final_score | −155.9 | **+42.7** | positive for the first time |
+
+Detection improved dramatically — enough to flip `final_score` positive
+for the first time — but p99 got worse, not better, even though each
+partition's tree is roughly 16× smaller. `5000` is now demonstrably more
+budget than any partition needs (identical accuracy to `8000` above), so
+some of that regression is almost certainly wasted backtracking on the
+larger partitions; a smaller budget tuned specifically for the
+partitioned index is the obvious next measurement, not yet done as of this
+writing.
+
 ## Smoke test (official `loadtest/smoke.js`, 1 VU, 5 requests)
 
 ```
@@ -172,8 +224,8 @@ final_score = score_p99 + score_det               , range [-6000, +6000]
 
 The ceiling of `+6000` requires **both** `p99 ≤ 1ms` *and* `E = 0` (zero
 weighted errors). Every 10× improvement in p99 is worth another 1000
-points — going from our measured 1174.5ms to 1ms would require closing a
-~1000× latency gap, worth roughly +3100 points on its own.
+points — going from our measured 1644.6ms to 1ms would require closing a
+~1600× latency gap, worth roughly +3200 points on its own.
 
 That gap is not a tuning knob, it's an architectural choice. Sustaining
 sub-millisecond p99 at 1200 req/s on 0.475 vCPU per replica means the
@@ -193,12 +245,13 @@ more-careful version of this one.
 This project deliberately does not chase that ceiling (see
 [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md) for why: structured logging,
 idiomatic `net/http`, a maintainable k-d tree). With the correct 3M
-dataset, a properly tuned search budget, and the low-risk optimizations
-above (pre-rendered responses, buffer pooling, GC tuning), it clears both
-hard cutoffs comfortably (`failure_rate` 5.27% against a 15% ceiling, p99
-1174.5ms against a 2000ms ceiling) and lands at `final_score ≈ -155.9` —
-far from the theoretical ceiling, but for reasons that are now fully
-measured and understood rather than guessed at: the score is dominated by
-the p99 term, and closing that gap further ([`PATH_TO_EXCELLENCE.md`](PATH_TO_EXCELLENCE.md))
+dataset, a properly tuned search budget, the low-risk optimizations above
+(pre-rendered responses, buffer pooling, GC tuning), and categorical-tag
+partitioning, it clears both hard cutoffs comfortably (`failure_rate`
+1.68% against a 15% ceiling, p99 1644.6ms against a 2000ms ceiling) and
+lands at `final_score ≈ +42.7` — positive for the first time, though still
+far from the theoretical ceiling, for reasons that are now fully measured
+and understood rather than guessed at: the score is dominated by the p99
+term, and closing that gap further ([`PATH_TO_EXCELLENCE.md`](PATH_TO_EXCELLENCE.md))
 is a rewrite into a fundamentally different architecture, not a parameter
 change.

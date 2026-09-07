@@ -55,3 +55,43 @@ func LoadFile(path string) (*Index, error) {
 
 	return Load(bufio.NewReaderSize(f, ioBufferSize))
 }
+
+// Save writes pi to w using gob. See Index.Save for why gob.
+func (pi *PartitionedIndex) Save(w io.Writer) error {
+	return gob.NewEncoder(w).Encode(pi)
+}
+
+// SaveFile writes pi to the given path, creating or truncating it.
+func (pi *PartitionedIndex) SaveFile(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	bw := bufio.NewWriterSize(f, ioBufferSize)
+	if saveErr := pi.Save(bw); saveErr != nil {
+		return saveErr
+	}
+	return bw.Flush()
+}
+
+// LoadPartitioned reads a PartitionedIndex previously written by Save.
+func LoadPartitioned(r io.Reader) (*PartitionedIndex, error) {
+	var pi PartitionedIndex
+	if err := gob.NewDecoder(r).Decode(&pi); err != nil {
+		return nil, err
+	}
+	return &pi, nil
+}
+
+// LoadPartitionedFile reads a PartitionedIndex from the given path.
+func LoadPartitionedFile(path string) (*PartitionedIndex, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	return LoadPartitioned(bufio.NewReaderSize(f, ioBufferSize))
+}

@@ -2,7 +2,8 @@
 
 [`RESULTS.md`](RESULTS.md#why-the-winning-solutions-score-close-to-the-6000-point-ceiling)
 shows the scoring formula and where this project actually lands
-(`final_score ≈ -155.9`, dominated by the p99 term). This document is the
+(`final_score ≈ +42.7`, positive for the first time — still dominated by
+the p99 term). This document is the
 follow-up to the obvious next question: **what would it actually take to
 close that gap?** Not as a to-do list this project intends to execute —
 that would contradict the whole premise in
@@ -18,7 +19,7 @@ score_det = 1000 · log10(1/ε) − 300·log10(1+E)      ceiling ~+3000 at E = 0
 final_score = score_p99 + score_det                 range [-6000, +6000]
 ```
 
-Measured today: `p99 = 1174.5ms` → `score_p99 = -69.9`. To reach the +3000
+Measured today: `p99 = 1644.6ms` → `score_p99 = -216.1`. To reach the +3000
 ceiling requires `p99 ≤ 1ms` — roughly **three orders of magnitude** faster,
 sustained at 1200 req/s on 0.475 vCPU per replica. That budget leaves well
 under a millisecond of wall-clock time per request for *everything*:
@@ -40,6 +41,22 @@ return it buys.
 > [`RESULTS.md`](RESULTS.md#low-risk-optimizations-pre-rendered-responses-buffer-pooling-gc-tuning)
 > for what they measurably bought (p99 −7.8%, http_errors −46%) and why the
 > rest of this list is a different category of trade-off.
+
+> **Note:** categorical-tag partitioning is also now implemented
+> (`internal/knn.Tag`/`PartitionedIndex`) — reference vectors are split
+> into up to 16 buckets by four already-boolean dimensions
+> (card_present, is_online, unknown_merchant, has-last-transaction) at
+> build time, and a query is routed to just its own bucket's k-d tree
+> instead of the single 3M-vector tree. This is pure data partitioning,
+> not an approximation technique with its own tuning parameters like IVF
+> or SIMD — no assembly, no custom event loop. Measured effect: offline
+> failure rate at `KNN_MAX_EXTRA_LEAVES=5000` dropped from 5.3% to 1.11%,
+> and `final_score` under the real load test went from −155.9 to **+42.7**
+> — positive for the first time. See
+> [`RESULTS.md`](RESULTS.md#categorical-tag-partitioning) for the full
+> numbers. Item 3 below (IVF/VP-tree) would now apply *inside* each of
+> these already-smaller partitions, compounding rather than competing with
+> this change.
 
 ## 1. Bypass `net/http`
 
@@ -139,6 +156,6 @@ above should make clear it is not "cheating" or unfair, just a different
 set of priorities. This project's stated goal from the start was a
 production-shaped, maintainable Go service, not a maximum-score entry in a
 closed competition — see [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md#why-this-isnt-a-bit-mining-exercise).
-The gap between `-155.9` and `+6000` is now fully measured and explained
+The gap between `+42.7` and `+6000` is now fully measured and explained
 rather than mysterious; closing the rest of it is a rewrite into a
 different kind of project, not a backlog for this one.

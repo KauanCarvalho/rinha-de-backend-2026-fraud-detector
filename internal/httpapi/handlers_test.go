@@ -38,7 +38,7 @@ func testHandlerWithLabel(t *testing.T, label knn.Label) http.Handler {
 		vectors[i] = point
 		labels[i] = label
 	}
-	idx := knn.Build(vectors, labels, knn.DefaultLeafSize)
+	idx := knn.BuildPartitioned(vectors, labels, knn.DefaultLeafSize)
 	det := detector.New(idx, 0)
 	logger := observability.NewLogger("error") // keep test output quiet
 

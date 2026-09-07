@@ -8,11 +8,11 @@ import (
 )
 
 type Detector struct {
-	index          *knn.Index
+	index          *knn.PartitionedIndex
 	maxExtraLeaves int
 }
 
-func New(index *knn.Index, maxExtraLeaves int) *Detector {
+func New(index *knn.PartitionedIndex, maxExtraLeaves int) *Detector {
 	return &Detector{index: index, maxExtraLeaves: maxExtraLeaves}
 }
 

@@ -39,7 +39,7 @@ func run() int {
 	cfg := config.Load()
 	logger := observability.NewLogger(cfg.LogLevel)
 
-	idx, loadErr := knn.LoadFile(cfg.IndexPath)
+	idx, loadErr := knn.LoadPartitionedFile(cfg.IndexPath)
 	if loadErr != nil {
 		logger.Error("failed to load index", "path", cfg.IndexPath, "error", loadErr)
 		return exitErr

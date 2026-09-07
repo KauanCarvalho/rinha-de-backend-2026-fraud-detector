@@ -31,7 +31,7 @@ func sampleRequest() domain.FraudScoreRequest {
 	}
 }
 
-func buildIndexAroundQuery(t *testing.T, req domain.FraudScoreRequest, fraudNear, legitNear int) *knn.Index {
+func buildIndexAroundQuery(t *testing.T, req domain.FraudScoreRequest, fraudNear, legitNear int) *knn.PartitionedIndex {
 	t.Helper()
 
 	query := knn.Quantize(knn.Vector(vectorize.Vectorize(req)))
@@ -57,7 +57,7 @@ func buildIndexAroundQuery(t *testing.T, req domain.FraudScoreRequest, fraudNear
 		labels = append(labels, knn.LabelLegit)
 	}
 
-	return knn.Build(vectors, labels, knn.DefaultLeafSize)
+	return knn.BuildPartitioned(vectors, labels, knn.DefaultLeafSize)
 }
 
 func TestDetector_Evaluate(t *testing.T) {
