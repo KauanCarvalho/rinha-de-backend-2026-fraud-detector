@@ -135,6 +135,7 @@ service's own behavior, never to build or influence the detection index.
 `.github/workflows/ci.yml` runs `go vet`, `golangci-lint`, the unit test
 suite (`-race -cover`), then builds the real Docker image and runs the
 official k6 smoke test against the containerized stack. `release.yml`
-publishes the image to GHCR on a version tag — see the note at its top
+publishes the image to GHCR (tagged `latest` and by commit SHA) on every
+push to `main` — see the note at its top
 about GHCR's default package visibility before assuming a failed `docker
 pull` is a bug.

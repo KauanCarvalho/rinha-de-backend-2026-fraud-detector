@@ -1,9 +1,21 @@
+# Publishes the api image to GHCR on every push to main.
+#
+# IMPORTANT — GHCR packages pushed with the default GITHUB_TOKEN are
+# created PRIVATE, even from a public repository. There is no reliable way
+# to flip that from within the workflow with the token's default
+# permissions, so after the *first* successful run, go to:
+#   https://github.com/users/<you>/packages/container/rinha-de-backend-2026-fraud-detector/settings
+# and change visibility to Public — otherwise `docker pull` will 401 for
+# anyone else, which is exactly the "common mistake" the challenge's own
+# FAQ.md warns about (leaving the referenced image private). See
+# .github/docs/RUNNING_FROM_GHCR.md for the consumer-facing example this
+# unblocks.
 name: Release image
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,25 +25,29 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # GHCR image names must be lowercase; the repo/module name
+      # (rinha-de-backend-2026-fraud-detector) already matches go.mod's
+      # module path, so the published image keeps that same name too —
+      # only the owner needs lowercasing.
       - name: Compute image reference
         id: image
         run: echo "ref=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ steps.image.outputs.ref }}:${{ github.ref_name }}
             ${{ steps.image.outputs.ref }}:latest
+            ${{ steps.image.outputs.ref }}:${{ github.sha }}
