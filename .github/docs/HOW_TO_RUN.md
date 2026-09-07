@@ -61,9 +61,9 @@ reflect actual k-NN search quality, not an answer-key mismatch.
 | Variable | Default | Meaning |
 |---|---|---|
 | `PORT` | `9999` | HTTP listen port |
-| `INDEX_PATH` | `data/index.bin` | path to the pre-built k-d tree |
+| `INDEX_PATH` | `data/index.bin` | path to the pre-built IVF index |
 | `LOG_LEVEL` | `info` | `debug`\|`info`\|`warn`\|`error` |
-| `KNN_MAX_EXTRA_LEAVES` | `1000` | k-d tree backtracking budget (0 = unbounded/exact — not viable under load, see [`RESULTS.md`](RESULTS.md)) |
+| `KNN_NPROBE` | `8` | number of IVF clusters probed per search — see [`RESULTS.md`](RESULTS.md#replacing-the-k-d-tree-with-ivf) |
 | `READ_TIMEOUT` / `WRITE_TIMEOUT` / `SHUTDOWN_TIMEOUT` | `5s` each | HTTP server timeouts |
 
 Every default is sane enough that the container runs correctly with **no

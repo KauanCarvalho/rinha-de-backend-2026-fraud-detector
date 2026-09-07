@@ -56,6 +56,13 @@ just moved out of `main`'s current tree.)
 
 ## In-process k-d tree: why a search budget exists, at 3M vectors
 
+> **Superseded.** The k-d tree described in this section and the next was
+> later replaced entirely by an IVF index — see
+> [Replacing the k-d tree with IVF](#replacing-the-k-d-tree-with-ivf)
+> below for what replaced it and why. Kept here for the honest trail of
+> what was tried, measured, and learned along the way; `internal/knn` no
+> longer contains a k-d tree at all.
+
 14 dimensions is past the point where k-d trees keep meaningful pruning
 power — an *unbounded* search degrades toward a near-linear scan as the
 dataset grows. Measured directly against the real 3M-vector index
@@ -156,6 +163,14 @@ improvement:
 
 ## Categorical-tag partitioning
 
+> **The partitioning described here is still exactly how the index is
+> organized today** — only what each partition holds internally later
+> changed, from a k-d tree to an IVF index (see
+> [Replacing the k-d tree with IVF](#replacing-the-k-d-tree-with-ivf)).
+> `KNN_MAX_EXTRA_LEAVES` in this section was also later renamed
+> `KNN_NPROBE` and re-tuned again for IVF — the final, current value is in
+> that section, not here.
+
 A comparison Go solution ([abeswz/gopher-fraud-detection](https://github.com/abeswz/gopher-fraud-detection))
 splits its 3M-vector reference set into partitions by a 4-bit tag before
 doing any distance-based search at all. Four of this project's 14
@@ -225,8 +240,104 @@ load test each time) confirms this and finds a new, much lower optimum:
 better than `500` on every metric too — below `1000`, p99 stops improving
 (it's dominated by fixed costs — HTTP, GC, network — once search itself is
 cheap enough) while detection keeps getting worse, a strictly bad trade in
-both directions. `KNN_MAX_EXTRA_LEAVES=1000` is the value this project
-ships with.
+both directions. This was the value the project shipped with at this
+point — since superseded, see the next section.
+
+## Replacing the k-d tree with IVF
+
+Two attempts at squeezing more out of the tag-partitioned k-d tree were
+tried and measured next, and both made things *worse*, not better:
+
+1. **Confidence-based search escalation** — run a cheap, small-budget
+   search first; only pay for a second, expensive search when the result
+   lands near the approve/deny cutoff (`fraudCount` 2–4), trusting the
+   cheap result otherwise. Offline failure rate got *worse* (8.52% vs.
+   4.21% for a flat large budget) — the cheap tier's errors weren't
+   confined to the boundary zone the way the theory assumed; it was
+   sometimes confidently wrong. Reverted.
+2. **Rebalancing the 12 tag-partitions by an amount-median split** — the
+   biggest partition held 33% of all vectors; splitting each partition in
+   two by its own median `amount` (a single global threshold didn't work —
+   `amount`'s typical value varies by an order of magnitude across tags)
+   balanced every partition to within a fraction of a percent of 50/50.
+   Offline accuracy improved (0.87% vs. 1.11%) but the real load test got
+   worse twice in a row (`final_score` +16.7 and +8.5, down from +214.5) —
+   doubling the leaf-partition count (24 vs. 12) cost more in overhead than
+   the better balance saved in search time. Reverted.
+
+Both are a repeat of a pattern this project kept running into: an idea
+that is correct about *offline accuracy* can still be wrong about
+*real-world latency under concurrent load*, because the two are shaped by
+different things (search-space size vs. memory layout, scheduling, and
+constant overhead). The fix that actually worked was a different kind of
+change altogether — not a smarter policy on top of the k-d tree, but
+replacing the search structure under it.
+
+### Why IVF, and what changed
+
+An **IVF (Inverted-File) index** clusters a partition's own reference
+vectors ahead of time with k-means, then at query time only scans the
+`nprobe` clusters nearest the query — trading a small, tunable amount of
+recall for a search cost that no longer depends on backtracking through a
+tree at all. `internal/knn.BuildIVF` replaces `internal/knn.Build`
+entirely: `PartitionedIndex.Partitions` now holds one `IVFIndex` per tag
+instead of one k-d tree, with cluster count chosen per partition
+(`n/1000`, clamped to `[32, 512]`) and 12 Lloyd's-algorithm iterations,
+parallelized across the build machine's CPUs. The k-d tree code
+(`build.go`, the tree-walking half of `search.go`, `Index`) was deleted
+from the repository outright, not just left unused — the two failed
+experiments above were reverted by discarding new code, but IVF's win was
+large and reproducible enough to justify actually removing what it
+replaced.
+
+Build cost went up — a real, honest trade-off:
+
+| step | k-d tree | IVF |
+|---|---|---|
+| build (3M vectors, 12 partitions) | ~1.7s | ~34s |
+
+Still comfortably inside a `docker build` step, and it's paid once, not
+per request.
+
+### Offline nprobe sweep (same 50,000 labeled requests)
+
+| `nprobe` | TP | TN | FP | FN | offline failure_rate |
+|---|---|---|---|---|---|
+| 1 | 33,793 | 13,831 | 1,169 | 1,207 | 4.75% |
+| 2 | 34,560 | 14,626 | 402 | 412 | 1.63% |
+| 4 | 34,877 | 14,929 | 85 | 109 | 0.39% |
+| 8 | 34,932 | 14,995 | 30 | 43 | 0.15% |
+| 16 | 34,950 | 15,020 | 12 | 18 | 0.06% |
+| 32 | 34,961 | 15,034 | 1 | 4 | 0.01% |
+
+Every one of these beats the k-d tree's best-ever offline number (1.11%
+at a much larger, much more expensive budget) by at least an order of
+magnitude, even at `nprobe=1`.
+
+### Full load test, `nprobe` swept
+
+| `nprobe` | p99 | failure_rate | detection_score | final_score |
+|---|---|---|---|---|
+| 4 | 1302ms | 0.56% | +868.5 | +753.8 |
+| **8 (chosen)** | 1255–1441ms\* | 0.18–0.36% | +975–1596 | **+660 to +1497**\* |
+| 16 | 1597ms | 0.38% | +862.6 | +659.3 |
+
+\* `nprobe=8` was measured four times across this investigation, under
+varying host memory pressure from unrelated processes (see
+[`INFRASTRUCTURE.md`](INFRASTRUCTURE.md) — this project's own containers
+were never the cause). The spread (+659 on a contended host, +1497 on a
+freshly cleared one) is host noise, not index nondeterminism: the same
+build, same config, same test data. Even the worst of the four runs beat
+every other configuration measured in this project's entire history.
+`8` also beats both its neighbors on the sweep above (`4` and `16`) — the
+same "sweet spot in the middle" shape seen when tuning the k-d tree's
+budget earlier, not a coincidence: too few probes costs accuracy, too many
+costs latency for no further accuracy gain, once the true nearest
+neighbors are already reliably found.
+
+`KNN_NPROBE=8` (the `KNN_MAX_EXTRA_LEAVES` env var was renamed — see
+[`HOW_TO_RUN.md`](HOW_TO_RUN.md) — since "nprobe" is what it now controls)
+is the value this project ships with.
 
 ## Smoke test (official `loadtest/smoke.js`, 1 VU, 5 requests)
 
@@ -248,15 +359,18 @@ final_score = score_p99 + score_det               , range [-6000, +6000]
 
 The ceiling of `+6000` requires **both** `p99 ≤ 1ms` *and* `E = 0` (zero
 weighted errors). Every 10× improvement in p99 is worth another 1000
-points — going from our measured 1275.9ms to 1ms would require closing a
-~1300× latency gap, worth roughly +3100 points on its own.
+points — going from our measured ~1.3s p99 to 1ms would still require
+closing a ~1000× latency gap, worth roughly +3000 points on its own, even
+after IVF closed nearly all of the *detection* gap (E is now small enough
+that `detection_score` sits close to its own +3000 ceiling on a clean
+host — see the IVF section above).
 
-That gap is not a tuning knob, it's an architectural choice. Sustaining
-sub-millisecond p99 at 1200 req/s on 0.475 vCPU per replica means the
-per-request compute budget is a fraction of a millisecond end-to-end,
-including network I/O — there is no room left for Go's `net/http` request
-lifecycle, garbage collection pauses, or a pointer-chasing k-d tree with
-its attendant cache misses. The [inspiration repos](INFRASTRUCTURE.md#why-this-isnt-a-bit-mining-exercise)
+That remaining gap is not a tuning knob, it's an architectural choice.
+Sustaining sub-millisecond p99 at 1200 req/s on 0.475 vCPU per replica
+means the per-request compute budget is a fraction of a millisecond
+end-to-end, including network I/O — there is no room left for Go's
+`net/http` request lifecycle or garbage collection pauses, regardless of
+how good the search structure underneath them is. The [inspiration repos](INFRASTRUCTURE.md#why-this-isnt-a-bit-mining-exercise)
 that won this edition get there with a hand-rolled `epoll` event loop, a
 custom C load balancer using `SCM_RIGHTS` fd-passing, AVX2 SIMD distance
 calculations, `GC` disabled outright, and `logging: none` — every one of
@@ -268,14 +382,15 @@ more-careful version of this one.
 
 This project deliberately does not chase that ceiling (see
 [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md) for why: structured logging,
-idiomatic `net/http`, a maintainable k-d tree). With the correct 3M
-dataset, a properly tuned search budget, the low-risk optimizations above
-(pre-rendered responses, buffer pooling, GC tuning), and categorical-tag
-partitioning, it clears both hard cutoffs comfortably (`failure_rate`
-2.08% against a 15% ceiling, p99 1275.9ms against a 2000ms ceiling) and
-lands at `final_score ≈ +214.5` — positive and the best measured so far, though still
-far from the theoretical ceiling, for reasons that are now fully measured
-and understood rather than guessed at: the score is dominated by the p99
-term, and closing that gap further ([`PATH_TO_EXCELLENCE.md`](PATH_TO_EXCELLENCE.md))
+idiomatic `net/http`). With the correct 3M dataset, categorical-tag
+partitioning, an IVF index tuned to `nprobe=8`, and the low-risk
+optimizations above (pre-rendered responses, buffer pooling, GC tuning),
+it clears both hard cutoffs by a wide margin (`failure_rate` well under
+1% against a 15% ceiling, p99 around 1.3s against a 2000ms ceiling) and
+lands at `final_score` in the **+660 to +1497** range depending on host
+contention outside this project's own containers — the best measured
+result by a wide margin, and, unlike earlier in this project's history,
+now dominated almost entirely by the p99 term rather than detection
+quality. Closing what's left ([`PATH_TO_EXCELLENCE.md`](PATH_TO_EXCELLENCE.md))
 is a rewrite into a fundamentally different architecture, not a parameter
-change.
+or algorithm change.

@@ -58,7 +58,7 @@ services:
     environment:
       PORT: "9999"
       LOG_LEVEL: "info"
-      KNN_MAX_EXTRA_LEAVES: "1000"
+      KNN_NPROBE: "8"
       GOMEMLIMIT: "145MiB"
     ulimits:
       nofile:
@@ -75,7 +75,7 @@ services:
     environment:
       PORT: "9999"
       LOG_LEVEL: "info"
-      KNN_MAX_EXTRA_LEAVES: "1000"
+      KNN_NPROBE: "8"
       GOMEMLIMIT: "145MiB"
     ulimits:
       nofile:

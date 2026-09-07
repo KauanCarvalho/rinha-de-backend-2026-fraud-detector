@@ -45,8 +45,8 @@ repo has two binaries, and they run at very different times:
   pre-built index from disk, starts the HTTP server, handles graceful
   shutdown. This is what `ENTRYPOINT` in the `Dockerfile` runs.
 - **`cmd/indexbuilder`** — a build-time tool, not a server. It reads the
-  official `references.json.gz`, quantizes and indexes every vector into a
-  k-d tree, and serializes the result to `index.bin`. It runs once inside
+  official `references.json.gz`, quantizes and indexes every vector into an
+  IVF index, and serializes the result to `index.bin`. It runs once inside
   the Docker build (see the `indexer` stage in `Dockerfile`) or manually via
   `make index` for local development. `cmd/api` never parses the raw
   dataset itself — it only ever loads the binary this tool produces.
@@ -62,7 +62,7 @@ job:
 |---|---|
 | `domain` | wire types for the `/fraud-score` request/response, matching the challenge's API spec exactly |
 | `vectorize` | turns a request into the 14-dimensional normalized vector (`docs/en/DETECTION_RULES.md`'s formulas) |
-| `knn` | the k-d tree itself: quantization, build (with quickselect), bounded search, gob (de)serialization — knows nothing about fraud, just nearest-neighbor search over fixed-size vectors |
+| `knn` | quantization, categorical-tag partitioning, IVF index build (k-means) and search, gob (de)serialization — knows nothing about fraud, just nearest-neighbor search over fixed-size vectors |
 | `scoring` | the tiny, pure `fraud_score`/`approved` decision from a vote count |
 | `detector` | wires the three packages above into the one decision the HTTP layer needs — the seam that lets `vectorize`/`knn`/`scoring` be unit-tested in isolation and `detector` be tested as the full pipeline without touching HTTP |
 | `dataset` | streaming parser for the `{"vector": [...], "label": "..."}` format shared by `references.json(.gz)` — used by both `cmd/indexbuilder` and tests |
@@ -95,7 +95,7 @@ never depends on the network to fetch them (the same reasoning as
 `loadtest/fixtures/`):
 
 - **`references.json.gz`** — the actual reference dataset `cmd/indexbuilder`
-  builds the k-d tree from.
+  builds the IVF index from.
 - **`example-payloads.json`** — used by manual testing and `e2e/`.
 - **`example-references.json`** — a small excerpt of the reference dataset
   format, per `docs/en/DATASET.md`, handy for quick inspection.

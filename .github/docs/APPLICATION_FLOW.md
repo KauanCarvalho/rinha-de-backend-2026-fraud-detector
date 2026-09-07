@@ -2,7 +2,7 @@
 
 This walks through **everything** that happens — from a raw file of past
 transactions to a single `approved: true/false` answer — assuming no prior
-knowledge of vector search, k-d trees, or any of that. If you can read a
+knowledge of vector search, clustering, or any of that. If you can read a
 flowchart, you can follow this.
 
 ## The short version
@@ -70,7 +70,7 @@ and does three things to that ledger:
 flowchart TD
     A[references.json.gz<br/>~50MB compressed] -->|"1: decompress + read,<br/>one entry at a time<br/>(internal/dataset)"| B["3,000,000 vectors<br/>+ 3,000,000 labels<br/>in memory"]
     B -->|"2: quantize<br/>(internal/knn.Quantize)"| C["same numbers,<br/>compressed to int16<br/>~270MB instead of ~840MB"]
-    C -->|"3: split into up to 16 groups,<br/>build one k-d tree per group<br/>(internal/knn.BuildPartitioned)"| D["index.bin<br/>~118MB, organized<br/>for fast search"]
+    C -->|"3: split into up to 16 groups,<br/>build one IVF index per group<br/>(internal/knn.BuildPartitioned)"| D["index.bin<br/>~118MB, organized<br/>for fast search"]
 ```
 
 **Step 1 — read.** Each of the 3M lines is parsed one at a time (never all
@@ -95,65 +95,58 @@ whole app.
 That's the naive approach — and it works! For each new transaction, compute
 the distance to all 3,000,000 stored ones, sort, take the 5 closest. It's
 also too slow: measured on this exact dataset, that "check everyone"
-approach takes ~14-29 milliseconds *per request* — and the scoring rules
+approach takes tens of milliseconds *per request* — and the scoring rules
 for this challenge want answers in around 1 millisecond. Something faster
-was needed.
+was needed, and it turned out to take two tricks stacked together, not one.
 
-**The analogy: finding a word in a dictionary.** If a word is somewhere in
-a 1,000-page dictionary and you flip through page by page, that's slow. But
-because the dictionary is *alphabetically organized*, you can jump straight
-to roughly the right area and narrow down from there — a handful of
-comparisons instead of a thousand. A **k-d tree** does the same trick, but
-for 14-dimensional points instead of alphabetical words: it recursively
-splits the 3 million points into smaller and smaller groups (imagine
-repeatedly asking "is this point's 3rd number bigger or smaller than X?"
-and going left or right), until each final group has only ~32 points left
-in it. Searching means walking down that structure instead of checking
-every point — dramatically fewer comparisons for the typical case.
-
-```mermaid
-flowchart TD
-    Root["All 3,000,000 points"] --> L["~1,500,000 points<br/>(one side of a split)"]
-    Root --> R["~1,500,000 points<br/>(other side)"]
-    L --> LL["...keeps splitting..."]
-    L --> LR["...keeps splitting..."]
-    R --> RL["...keeps splitting..."]
-    R --> RR["...keeps splitting..."]
-    LL --> Leaf["🍃 leaf: ~32 points<br/>(final answer lives<br/>near here)"]
-```
-
-One honest caveat, explained in plain terms: this trick works best when
-there are few "dimensions" (few numbers per point). This app's points have
-**14** numbers each, which is enough that the dictionary trick stops being
-perfectly efficient — it still massively narrows things down, but the code
-also puts a hard cap on how much extra digging it's allowed to do per
-search (`KNN_MAX_EXTRA_LEAVES`, default 1000), so that even a hard case
-never blows past a predictable time budget. It's the difference between "I
-will spend as long as it takes to be 100% certain" and "I will spend at
-most this long, and take the best answer I've found by then." In practice
-that difference is basically never wrong — see
-[`RESULTS.md`](RESULTS.md) for the actual measured numbers.
-
-### An extra trick before the tree: splitting by a coarse tag first
-
-Before any of the 3 million points even reach a k-d tree, they're split
-into up to 16 separate groups by a much simpler rule: 4 of the 14 numbers
-are already yes/no answers (was the terminal online? was the card
-physically present? is this an unfamiliar merchant? did this customer have
-a previous transaction at all?). Combine those 4 yes/no answers and there
-are only 16 possible combinations — think of it like a library that first
-splits every book by language before alphabetizing within each language
-section: a French dictionary lookup never has to page through the English
-section at all.
-
-Each of those up to 16 groups gets its *own*, smaller k-d tree (the real
-dataset produces 12 non-empty groups). A new transaction's own yes/no
-answers pick which group's tree it searches — it never even looks at
-reference transactions from a different combination of those 4 answers.
-This is a real, measured improvement, not just theory — see
+**Trick 1 — split by a coarse tag first.** 4 of the 14 numbers are already
+yes/no answers (was the terminal online? was the card physically present?
+is this an unfamiliar merchant? did this customer have a previous
+transaction at all?). Combine those 4 yes/no answers and there are only 16
+possible combinations — think of it like a library that first splits every
+book by language before shelving within each language section: a French
+lookup never has to check the English section at all. Every one of the 3
+million reference transactions gets sorted into one of up to 16 groups
+this way (the real dataset produces 12 non-empty ones) before anything
+else happens, and a new transaction's own 4 yes/no answers pick which
+single group it will ever be compared against. This is a real, measured
+improvement, not just theory — see
 [`RESULTS.md`](RESULTS.md#categorical-tag-partitioning) for exactly how
 much it helped and one surprise it caused (some groups turned out to hold
 far more transactions than others).
+
+**Trick 2 — inside each group, cluster first, then only check the nearby
+clusters.** This is called an **IVF index** (Inverted File — the name is a
+historical accident from library science, not a useful mental image).
+Picture a librarian who, instead of shelving books strictly alphabetically,
+first sorts every book in their section into one of a few hundred labeled
+bins by topic (grouped by *similarity*, discovered by an algorithm called
+k-means — bins aren't picked by hand, they emerge from the data). A reader
+looking for "something like this book" doesn't check every bin — they walk
+straight to the handful of bins whose *label* is closest to what they want,
+and only look inside those.
+
+```mermaid
+flowchart TD
+    A["A group's own points<br/>(one of the 12 tags above)"] -->|"k-means clustering<br/>at build time"| B["~32-512 labeled bins<br/>(cluster count scales<br/>with group size)"]
+    Q["New transaction's<br/>14 numbers"] -->|"1: compare against<br/>every bin's label only"| B
+    B -->|"2: pick the nprobe<br/>closest bins"| C["Only check points<br/>inside those bins"]
+    C --> R["5 nearest found"]
+```
+
+Concretely: at build time, `internal/knn.BuildIVF` runs k-means on a
+group's own vectors to produce a set of "bin labels" (centroids). At
+request time, the new transaction's 14 numbers are compared against every
+*label* first (cheap — there are only dozens to hundreds of them, not
+millions), the `nprobe` closest bins are picked, and only the real
+transactions inside those specific bins get compared in full. `KNN_NPROBE`
+(default `8`) controls how many bins get checked — check too few and real
+near-matches in an unchecked bin get missed; check too many and there's no
+speed benefit left over comparing everyone. See
+[`RESULTS.md`](RESULTS.md#replacing-the-k-d-tree-with-ivf) for the actual
+measured numbers behind that trade, including two other ideas that were
+tried first, looked good on paper, and made things worse in real testing
+before this one was tried and won decisively.
 
 The output of all these steps is a single file, `index.bin`, containing
 the whole organized structure — all 12 group-trees together. That file
@@ -291,11 +284,11 @@ both sides need to speak the same "precision dialect."
 
 #### Step 4 — Search: find the 5 most similar past cases
 
-This is where the group-trees from Part 1 actually get used. The app looks
-at this transaction's own 4 yes/no answers (online? card present? unknown
-merchant? has a previous transaction?) to pick which of the up to 16
-groups to search — the same rule used to build the groups in the first
-place — then hands that one group's k-d tree the new transaction's 14
+This is where the group indexes from Part 1 actually get used. The app
+looks at this transaction's own 4 yes/no answers (online? card present?
+unknown merchant? has a previous transaction?) to pick which of the up to
+16 groups to search — the same rule used to build the groups in the first
+place — then hands that one group's IVF index the new transaction's 14
 numbers and asks: *"of the entries you hold, which 5 are numerically
 closest to this one?"* "Closest" here means
 literal straight-line distance across all 14 numbers at once (the same
@@ -369,9 +362,12 @@ instance can answer any request, entirely on its own.
   numbers are close to each other, position by position.
 - **Nearest neighbor** — given a new vector, the stored vector(s) closest
   to it. "5 nearest neighbors" = the 5 closest matches.
-- **k-d tree** — a way of pre-organizing a big pile of vectors so that
-  finding nearest neighbors doesn't require checking every single one (the
-  "dictionary" analogy above).
+- **IVF index (Inverted File)** — a way of pre-organizing a big pile of
+  vectors, by first clustering them (see the "librarian sorting into
+  labeled bins" analogy above), so that finding nearest neighbors only
+  requires checking the bins nearest the query instead of every vector.
+- **k-means** — the clustering algorithm IVF uses to decide what the bins
+  are, by grouping similar vectors together automatically.
 - **Quantize** — rounding numbers to a less precise, more compact format on
   purpose, to save memory, when that precision isn't actually needed.
 - **Label** — the known, correct answer attached to a historical record

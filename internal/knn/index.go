@@ -1,5 +1,7 @@
-// Package knn implements an in-process k-d tree for approximate/exact
-// k-nearest-neighbor search over int16-quantized fixed-size vectors.
+// Package knn implements an in-process IVF (Inverted-File) approximate
+// nearest-neighbor index over int16-quantized fixed-size vectors, further
+// split into coarse partitions by a few cheap categorical dimensions (see
+// Tag) before IVF search even runs.
 //
 // It knows nothing about fraud detection: callers are responsible for
 // picking k and interpreting the returned labels (see FraudCount for the
@@ -68,29 +70,6 @@ func FraudCount(neighbors []Neighbor) int {
 	}
 	return c
 }
-
-// node is one entry of the flat, index-addressed k-d tree. A leaf has
-// Left == -1 and its points live in Vectors/Labels at [Start, Start+Len).
-// An internal node splits on SplitDim/SplitValue.
-type node struct {
-	Left, Right int32
-	Start, Len  int32
-	SplitDim    int32
-	SplitValue  int16
-}
-
-func (n *node) isLeaf() bool { return n.Left < 0 }
-
-// Index is a built k-d tree ready to be searched or serialized.
-type Index struct {
-	Nodes   []node
-	Vectors []QVector
-	Labels  []Label
-	Root    int32
-}
-
-// Len returns the number of vectors held by the index.
-func (idx *Index) Len() int { return len(idx.Vectors) }
 
 func sqDist(a, b QVector) int64 {
 	var sum int64

@@ -24,7 +24,7 @@ This repo makes the opposite trade explicit:
 |---|---|---|
 | language | Rust + C | Go (stdlib only for HTTP) |
 | networking | custom `epoll`, fd-passing LB | `net/http`, HAProxy (plain round-robin) |
-| NN search | partitioned k-d tree, AVX2 SIMD | k-d tree, pure Go, bounded search budget |
+| NN search | partitioned k-d tree, AVX2 SIMD | categorical partitioning + IVF, pure Go |
 | observability | `logging: none` | structured JSON logs (`log/slog`), request IDs |
 | project shape | single crate, hand-rolled binary format | `cmd/` + `internal/`, table-driven tests, CI, lint |
 
@@ -38,8 +38,8 @@ flowchart LR
     Client -->|":9999"| LB[HAProxy<br/>round-robin, no business logic]
     LB --> API1[api instance 1]
     LB --> API2[api instance 2]
-    API1 --> IDX1[(k-d tree index<br/>in-memory)]
-    API2 --> IDX2[(k-d tree index<br/>in-memory)]
+    API1 --> IDX1[(IVF index<br/>in-memory)]
+    API2 --> IDX2[(IVF index<br/>in-memory)]
 ```
 
 - **Load balancer**: HAProxy, plain round-robin over `/ready` health checks.
@@ -47,7 +47,7 @@ flowchart LR
   it never inspects request payloads (see `deployments/haproxy.cfg`).
 - **API**: Go 1.27, stdlib `net/http` (Go 1.22+'s method-aware
   `http.ServeMux` is enough for two routes — no router framework).
-- **Reference index**: pre-processed into a k-d tree binary
+- **Reference index**: pre-processed into an IVF index binary
   (`cmd/indexbuilder`) at Docker **build** time — never at request time or
   even at container start beyond a single deserialize. See
   [`docs/en/DATASET.md`](https://github.com/zanfranceschi/rinha-de-backend-2026/blob/main/docs/en/DATASET.md):
@@ -57,7 +57,7 @@ flowchart LR
   challenge's rules): 1 CPU / 350MB. Current split: HAProxy 0.05 CPU/30MB,
   each API replica 0.475 CPU/160MB.
 
-## The k-NN search budget
+## The k-NN search
 
 The 14-dimension vectorization and the k-NN decision are specified exactly
 in the challenge's
@@ -69,24 +69,26 @@ choices work together here:
    boolean-valued or have a sentinel for "absent" (`is_online`,
    `card_present`, `unknown_merchant`, whether `last_transaction` was
    present). `internal/knn.Tag` derives a 4-bit key from these, and
-   `internal/knn.PartitionedIndex` builds one k-d tree per non-empty tag
-   (12, on the real dataset) instead of a single 3,000,000-vector tree. A
-   query is routed to just its own partition's tree — the reference set
+   `internal/knn.PartitionedIndex` builds one search index per non-empty
+   tag (12, on the real dataset) instead of a single 3,000,000-vector
+   index. A query is routed to just its own partition — the reference set
    never needs comparing against tag combinations it structurally can't
    match.
-2. **The k-d tree search within a partition is intentionally bounded, not
-   exact.** 14 dimensions is past the point where a k-d tree keeps
-   meaningful pruning power, even at a partition's smaller scale — an
-   unbounded search is accurate (offline failure rate 0.00%) but does not
-   survive concurrent load: at 1200 req/s it produced 84% HTTP timeouts in
-   testing. `KNN_MAX_EXTRA_LEAVES` bounds the backtracking budget after an
-   always-unlimited greedy descent to a leaf, trading a small amount of
-   recall for a p99 that stays under the challenge's 2000ms cutoff.
+2. **IVF (Inverted-File) search within each partition.** `internal/knn.BuildIVF`
+   clusters a partition's own vectors with k-means (cluster count scaled
+   to the partition's size, clamped to `[32, 512]`), and `IVFIndex.Search`
+   only scans the `nprobe` clusters nearest the query instead of every
+   vector in the partition. This replaced an earlier k-d tree entirely —
+   see [`RESULTS.md`](RESULTS.md#replacing-the-k-d-tree-with-ivf) for why:
+   in short, a k-d tree loses most of its pruning power at 14 dimensions,
+   while IVF's cost is a direct, predictable function of `nprobe` instead
+   of an unpredictable amount of tree backtracking. `KNN_NPROBE` controls
+   `nprobe` at runtime.
 
 See [`RESULTS.md`](RESULTS.md#categorical-tag-partitioning) for the
-partitioning numbers and [`RESULTS.md`](RESULTS.md#re-tuning-the-search-budget-for-the-partitioned-index)
-for how the budget was re-tuned afterward — `1000` is what this project
-ships with today.
+partitioning numbers and [`RESULTS.md`](RESULTS.md#replacing-the-k-d-tree-with-ivf)
+for the IVF numbers and the `nprobe` tuning that followed — `8` is what
+this project ships with today.
 
 `resources/references.json.gz` is the real 3,000,000-vector official
 dataset (see [`RESULTS.md`](RESULTS.md#the-dataset-it-really-is-3000000-vectors)

@@ -15,8 +15,8 @@ flowchart LR
     Client -->|":9999"| LB[HAProxy<br/>round-robin, no business logic]
     LB --> API1[api instance 1]
     LB --> API2[api instance 2]
-    API1 --> IDX1[(k-d tree index<br/>in-memory)]
-    API2 --> IDX2[(k-d tree index<br/>in-memory)]
+    API1 --> IDX1[(IVF index<br/>in-memory)]
+    API2 --> IDX2[(IVF index<br/>in-memory)]
 ```
 
 ## Quickstart

@@ -2,6 +2,7 @@ package knn_test
 
 import (
 	"bytes"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,6 +11,11 @@ import (
 	"github.com/KauanCarvalho/rinha-de-backend-2026-fraud-detector/internal/knn"
 	"github.com/KauanCarvalho/rinha-de-backend-2026-fraud-detector/internal/vectorize"
 )
+
+// fullProbe is an nprobe large enough that Search always probes every
+// cluster of a partition (Search clamps nprobe to the cluster count) —
+// the IVF equivalent of an exact, unbounded k-d tree search.
+const fullProbe = math.MaxInt
 
 // taggedVector builds a QVector with the given tag bits set on the real
 // vectorize dimensions Tag reads, and zero everywhere else. hasLastTx=false
@@ -66,7 +72,7 @@ func TestBuildPartitioned_RoutesVectorsToTheirOwnTag(t *testing.T) {
 	vectors := []knn.QVector{tagA, tagA, tagA, tagB, tagB}
 	labels := []knn.Label{knn.LabelLegit, knn.LabelLegit, knn.LabelFraud, knn.LabelFraud, knn.LabelFraud}
 
-	pi := knn.BuildPartitioned(vectors, labels, knn.DefaultLeafSize)
+	pi := knn.BuildPartitioned(vectors, labels)
 
 	assert.Equal(t, 3, pi.Partitions[0].Len())
 	assert.Equal(t, 2, pi.Partitions[2].Len())
@@ -94,7 +100,7 @@ func TestPartitionedIndex_Search_MatchesBruteForceWithinPartition(t *testing.T) 
 		vectors[i][vectorize.DimUnknownMerchant] = base[vectorize.DimUnknownMerchant]
 	}
 
-	pi := knn.BuildPartitioned(vectors, labels, knn.DefaultLeafSize)
+	pi := knn.BuildPartitioned(vectors, labels)
 
 	for q := range 5 {
 		query := randomQuery(int64(7000 + q))
@@ -104,7 +110,7 @@ func TestPartitionedIndex_Search_MatchesBruteForceWithinPartition(t *testing.T) 
 		query[vectorize.DimUnknownMerchant] = base[vectorize.DimUnknownMerchant]
 
 		want := knn.BruteForceSearch(vectors, labels, query, 5)
-		got := pi.Search(query, 5, 0)
+		got := pi.Search(query, 5, fullProbe)
 		assert.Equal(t, want, got)
 	}
 }
@@ -121,7 +127,7 @@ func TestPartitionedIndex_Search_FallsBackWhenTargetPartitionIsEmpty(t *testing.
 		vectors[i][vectorize.DimUnknownMerchant] = onlyTag[vectorize.DimUnknownMerchant]
 	}
 
-	pi := knn.BuildPartitioned(vectors, labels, knn.DefaultLeafSize)
+	pi := knn.BuildPartitioned(vectors, labels)
 	require.Positive(t, pi.Partitions[0].Len())
 
 	// Query tagged 15 (every bit set) -- guaranteed empty, since every
@@ -136,7 +142,7 @@ func TestPartitionedIndex_Search_FallsBackWhenTargetPartitionIsEmpty(t *testing.
 	require.Zero(t, pi.Partitions[15].Len())
 
 	want := knn.BruteForceSearch(vectors, labels, query, 5)
-	got := pi.Search(query, 5, 0)
+	got := pi.Search(query, 5, fullProbe)
 	assert.Equal(t, want, got)
 }
 
@@ -144,7 +150,7 @@ func TestPartitionedIndex_SaveFileLoadFile_RoundTrip(t *testing.T) {
 	t.Parallel()
 
 	vectors, labels := randomDataset(500, 21)
-	pi := knn.BuildPartitioned(vectors, labels, knn.DefaultLeafSize)
+	pi := knn.BuildPartitioned(vectors, labels)
 
 	path := t.TempDir() + "/partitioned.bin"
 	require.NoError(t, pi.SaveFile(path))
@@ -155,7 +161,7 @@ func TestPartitionedIndex_SaveFileLoadFile_RoundTrip(t *testing.T) {
 
 	for q := range 5 {
 		query := randomQuery(int64(8000 + q))
-		assert.Equal(t, pi.Search(query, 5, 0), loaded.Search(query, 5, 0))
+		assert.Equal(t, pi.Search(query, 5, fullProbe), loaded.Search(query, 5, fullProbe))
 	}
 }
 
@@ -163,7 +169,7 @@ func TestPartitionedIndex_SaveLoad_RoundTrip(t *testing.T) {
 	t.Parallel()
 
 	vectors, labels := randomDataset(300, 23)
-	pi := knn.BuildPartitioned(vectors, labels, knn.DefaultLeafSize)
+	pi := knn.BuildPartitioned(vectors, labels)
 
 	var buf bytes.Buffer
 	require.NoError(t, pi.Save(&buf))

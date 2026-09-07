@@ -7,32 +7,32 @@ import (
 )
 
 const (
-	defaultPort              = "9999"
-	defaultIndexPath         = "data/index.bin"
-	defaultLogLevel          = "info"
-	defaultKNNMaxExtraLeaves = 1000
-	defaultTimeout           = 5 * time.Second
+	defaultPort      = "9999"
+	defaultIndexPath = "data/index.bin"
+	defaultLogLevel  = "info"
+	defaultKNNNProbe = 8
+	defaultTimeout   = 5 * time.Second
 )
 
 type Config struct {
-	Port              string
-	IndexPath         string
-	LogLevel          string
-	KNNMaxExtraLeaves int
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
-	ShutdownTimeout   time.Duration
+	Port            string
+	IndexPath       string
+	LogLevel        string
+	KNNNProbe       int
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
+	ShutdownTimeout time.Duration
 }
 
 func Load() Config {
 	return Config{
-		Port:              getEnv("PORT", defaultPort),
-		IndexPath:         getEnv("INDEX_PATH", defaultIndexPath),
-		LogLevel:          getEnv("LOG_LEVEL", defaultLogLevel),
-		KNNMaxExtraLeaves: getEnvInt("KNN_MAX_EXTRA_LEAVES", defaultKNNMaxExtraLeaves),
-		ReadTimeout:       getEnvDuration("READ_TIMEOUT", defaultTimeout),
-		WriteTimeout:      getEnvDuration("WRITE_TIMEOUT", defaultTimeout),
-		ShutdownTimeout:   getEnvDuration("SHUTDOWN_TIMEOUT", defaultTimeout),
+		Port:            getEnv("PORT", defaultPort),
+		IndexPath:       getEnv("INDEX_PATH", defaultIndexPath),
+		LogLevel:        getEnv("LOG_LEVEL", defaultLogLevel),
+		KNNNProbe:       getEnvInt("KNN_NPROBE", defaultKNNNProbe),
+		ReadTimeout:     getEnvDuration("READ_TIMEOUT", defaultTimeout),
+		WriteTimeout:    getEnvDuration("WRITE_TIMEOUT", defaultTimeout),
+		ShutdownTimeout: getEnvDuration("SHUTDOWN_TIMEOUT", defaultTimeout),
 	}
 }
 

@@ -19,19 +19,18 @@ func main() {
 	var (
 		inputPath  = flag.String("input", "data/references.json.gz", "path to the gzipped references dataset")
 		outputPath = flag.String("output", "data/index.bin", "path to write the built index to")
-		leafSize   = flag.Int("leaf-size", knn.DefaultLeafSize, "k-d tree leaf size")
 	)
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
-	if err := run(logger, *inputPath, *outputPath, *leafSize); err != nil {
+	if err := run(logger, *inputPath, *outputPath); err != nil {
 		logger.Error("index build failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, inputPath, outputPath string, leafSize int) error {
+func run(logger *slog.Logger, inputPath, outputPath string) error {
 	start := time.Now()
 
 	onProgress := func(count int) {
@@ -47,8 +46,8 @@ func run(logger *slog.Logger, inputPath, outputPath string, leafSize int) error 
 	logger.Info("references loaded", "count", len(vectors), "elapsed", time.Since(start))
 
 	buildStart := time.Now()
-	idx := knn.BuildPartitioned(vectors, labels, leafSize)
-	logger.Info("index built", "leaf_size", leafSize, "elapsed", time.Since(buildStart))
+	idx := knn.BuildPartitioned(vectors, labels)
+	logger.Info("index built", "elapsed", time.Since(buildStart))
 
 	saveStart := time.Now()
 	if saveErr := idx.SaveFile(outputPath); saveErr != nil {

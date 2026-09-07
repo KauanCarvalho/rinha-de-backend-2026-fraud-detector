@@ -13,6 +13,10 @@ import (
 	"github.com/KauanCarvalho/rinha-de-backend-2026-fraud-detector/internal/vectorize"
 )
 
+// fullProbe is an nprobe large enough that Search always probes every
+// cluster of the tiny test indexes built below.
+const fullProbe = 1_000_000
+
 func sampleRequest() domain.FraudScoreRequest {
 	return domain.FraudScoreRequest{
 		ID: "tx-test-1",
@@ -57,7 +61,7 @@ func buildIndexAroundQuery(t *testing.T, req domain.FraudScoreRequest, fraudNear
 		labels = append(labels, knn.LabelLegit)
 	}
 
-	return knn.BuildPartitioned(vectors, labels, knn.DefaultLeafSize)
+	return knn.BuildPartitioned(vectors, labels)
 }
 
 func TestDetector_Evaluate(t *testing.T) {
@@ -82,7 +86,7 @@ func TestDetector_Evaluate(t *testing.T) {
 
 			req := sampleRequest()
 			idx := buildIndexAroundQuery(t, req, tt.fraudNear, tt.legitNear)
-			d := detector.New(idx, 0)
+			d := detector.New(idx, fullProbe)
 
 			got := d.Evaluate(req)
 

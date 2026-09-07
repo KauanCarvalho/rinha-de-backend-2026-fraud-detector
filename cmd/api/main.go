@@ -53,7 +53,7 @@ func run() int {
 
 	logger.Info("index loaded", "path", cfg.IndexPath, "vectors", idx.Len())
 
-	det := detector.New(idx, cfg.KNNMaxExtraLeaves)
+	det := detector.New(idx, cfg.KNNNProbe)
 	server := httpapi.NewServer(cfg, det, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

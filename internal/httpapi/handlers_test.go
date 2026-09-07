@@ -28,6 +28,10 @@ const validFraudScoreBody = `{
 	"last_transaction": null
 }`
 
+// fullProbe is an nprobe large enough that Search always probes every
+// cluster of the tiny test indexes built below.
+const fullProbe = 1_000_000
+
 func testHandlerWithLabel(t *testing.T, label knn.Label) http.Handler {
 	t.Helper()
 
@@ -38,8 +42,8 @@ func testHandlerWithLabel(t *testing.T, label knn.Label) http.Handler {
 		vectors[i] = point
 		labels[i] = label
 	}
-	idx := knn.BuildPartitioned(vectors, labels, knn.DefaultLeafSize)
-	det := detector.New(idx, 0)
+	idx := knn.BuildPartitioned(vectors, labels)
+	det := detector.New(idx, fullProbe)
 	logger := observability.NewLogger("error") // keep test output quiet
 
 	return httpapi.NewHandler(det, logger)
