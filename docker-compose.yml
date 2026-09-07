@@ -23,7 +23,7 @@ services:
       resources:
         limits:
           cpus: "0.05"
-          memory: "25MB"
+          memory: "30MB"
 
   api1:
     build: .
@@ -32,7 +32,7 @@ services:
     environment:
       PORT: "9999"
       LOG_LEVEL: "info"
-      KNN_MAX_EXTRA_LEAVES: "2000"
+      KNN_MAX_EXTRA_LEAVES: "5000"
       GOMEMLIMIT: "145MiB"
     networks:
       - rinha
@@ -57,7 +57,7 @@ services:
     environment:
       PORT: "9999"
       LOG_LEVEL: "info"
-      KNN_MAX_EXTRA_LEAVES: "2000"
+      KNN_MAX_EXTRA_LEAVES: "5000"
       GOMEMLIMIT: "145MiB"
     networks:
       - rinha

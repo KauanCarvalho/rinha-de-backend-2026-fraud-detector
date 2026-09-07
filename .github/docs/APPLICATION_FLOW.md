@@ -23,7 +23,7 @@ Everything below splits cleanly into two phases that never overlap:
 flowchart LR
     subgraph BUILD["Build time — happens once, before anything runs"]
         direction LR
-        A[references.json.gz<br/>1M past transactions,<br/>already labeled] --> B[cmd/indexbuilder] --> C[(index.bin<br/>~39MB file)]
+        A[references.json.gz<br/>3M past transactions,<br/>already labeled] --> B[cmd/indexbuilder] --> C[(index.bin<br/>~118MB file)]
     end
     subgraph RUNTIME["Runtime — happens forever after, per request"]
         direction LR
@@ -45,14 +45,14 @@ inside the running container, millions of times.
 ### The raw material
 
 [`resources/references.json.gz`](../../resources/references.json.gz) is a
-compressed file with 1,000,000 entries that looks like this:
+compressed file with 3,000,000 entries that looks like this:
 
 ```json
 { "vector": [0.01, 0.0833, 0.05, ..., 0.0416], "label": "legit" }
 { "vector": [0.58, 0.92, 1.0, ..., 0.0032], "label": "fraud" }
 ```
 
-Think of it as a **ledger of already-solved cases**: 1 million past
+Think of it as a **ledger of already-solved cases**: 3 million past
 transactions, each one already boiled down to 14 numbers (more on that
 below) and already stamped "this one was fraud" or "this one was legit."
 Nobody needs to figure out those labels — they came pre-labeled from the
@@ -68,12 +68,12 @@ and does three things to that ledger:
 
 ```mermaid
 flowchart TD
-    A[references.json.gz<br/>16.7MB compressed] -->|"1: decompress + read,<br/>one entry at a time<br/>(internal/dataset)"| B["1,000,000 vectors<br/>+ 1,000,000 labels<br/>in memory"]
-    B -->|"2: quantize<br/>(internal/knn.Quantize)"| C["same numbers,<br/>compressed to int16<br/>~90MB instead of ~280MB"]
-    C -->|"3: build k-d tree<br/>(internal/knn.Build)"| D["index.bin<br/>~39MB, organized<br/>for fast search"]
+    A[references.json.gz<br/>~50MB compressed] -->|"1: decompress + read,<br/>one entry at a time<br/>(internal/dataset)"| B["3,000,000 vectors<br/>+ 3,000,000 labels<br/>in memory"]
+    B -->|"2: quantize<br/>(internal/knn.Quantize)"| C["same numbers,<br/>compressed to int16<br/>~270MB instead of ~840MB"]
+    C -->|"3: build k-d tree<br/>(internal/knn.Build)"| D["index.bin<br/>~118MB, organized<br/>for fast search"]
 ```
 
-**Step 1 — read.** Each of the 1M lines is parsed one at a time (never all
+**Step 1 — read.** Each of the 3M lines is parsed one at a time (never all
 loaded as raw JSON text at once — that would need way more memory than this
 challenge's 350MB budget allows). Every entry becomes 14 floating-point
 numbers plus a fraud/legit flag.
@@ -82,7 +82,7 @@ numbers plus a fraud/legit flag.
 purpose"). Each of those 14 numbers lives between -1 and 1. Storing them as
 full 64-bit decimals is more precision than this problem needs, so each one
 gets rescaled and rounded into a 16-bit whole number instead (multiply by
-10,000, round). This alone shrinks the dataset from ~280MB to ~90MB — the
+10,000, round). This alone shrinks the dataset from ~840MB to ~270MB — the
 kind of thing that matters a lot when the entire app, including the load
 balancer, has to fit in 350MB total.
 
@@ -90,10 +90,10 @@ balancer, has to fit in 350MB total.
 below with a real analogy, because it's the one non-obvious idea in the
 whole app.
 
-### Why not just compare against all 1 million, every time?
+### Why not just compare against all 3 million, every time?
 
 That's the naive approach — and it works! For each new transaction, compute
-the distance to all 1,000,000 stored ones, sort, take the 5 closest. It's
+the distance to all 3,000,000 stored ones, sort, take the 5 closest. It's
 also too slow: measured on this exact dataset, that "check everyone"
 approach takes ~14-29 milliseconds *per request* — and the scoring rules
 for this challenge want answers in around 1 millisecond. Something faster
@@ -105,7 +105,7 @@ because the dictionary is *alphabetically organized*, you can jump straight
 to roughly the right area and narrow down from there — a handful of
 comparisons instead of a thousand. A **k-d tree** does the same trick, but
 for 14-dimensional points instead of alphabetical words: it recursively
-splits the 1 million points into smaller and smaller groups (imagine
+splits the 3 million points into smaller and smaller groups (imagine
 repeatedly asking "is this point's 3rd number bigger or smaller than X?"
 and going left or right), until each final group has only ~32 points left
 in it. Searching means walking down that structure instead of checking
@@ -113,8 +113,8 @@ every point — dramatically fewer comparisons for the typical case.
 
 ```mermaid
 flowchart TD
-    Root["All 1,000,000 points"] --> L["~500,000 points<br/>(one side of a split)"]
-    Root --> R["~500,000 points<br/>(other side)"]
+    Root["All 3,000,000 points"] --> L["~1,500,000 points<br/>(one side of a split)"]
+    Root --> R["~1,500,000 points<br/>(other side)"]
     L --> LL["...keeps splitting..."]
     L --> LR["...keeps splitting..."]
     R --> RL["...keeps splitting..."]
@@ -127,7 +127,7 @@ there are few "dimensions" (few numbers per point). This app's points have
 **14** numbers each, which is enough that the dictionary trick stops being
 perfectly efficient — it still massively narrows things down, but the code
 also puts a hard cap on how much extra digging it's allowed to do per
-search (`KNN_MAX_EXTRA_LEAVES`, default 2000), so that even a hard case
+search (`KNN_MAX_EXTRA_LEAVES`, default 5000), so that even a hard case
 never blows past a predictable time budget. It's the difference between "I
 will spend as long as it takes to be 100% certain" and "I will spend at
 most this long, and take the best answer I've found by then." In practice
@@ -149,14 +149,14 @@ short, strict startup sequence before it will accept a single request:
 ```mermaid
 flowchart TD
     A([Container starts]) --> B["Read configuration<br/>from environment variables<br/>(internal/config)"]
-    B --> C["Load index.bin into memory<br/>(~0.5s, ~90MB)"]
+    B --> C["Load index.bin into memory<br/>(~1.3s, ~270MB)"]
     C -->|"fails?"| C1["log the error, exit 1<br/>(container restarts)"]
     C -->|"succeeds"| D["Ask the OS to reclaim<br/>scratch memory used<br/>while loading"]
     D --> E["Wire up the HTTP routes<br/>and start listening on :9999"]
     E --> F(["Ready — GET /ready<br/>now returns 200"])
 ```
 
-This matters for one reason worth spelling out: **the 1-million-entry index
+This matters for one reason worth spelling out: **the 3-million-entry index
 is loaded exactly once, when the container boots**, and then lives in RAM
 for as long as the container runs. A request never triggers any file
 reading or parsing — it only ever reads a structure that was already
@@ -258,7 +258,7 @@ Two details worth calling out because they trip people up:
   stops mattering; only "over the line or not" does.
 
 The result of this step is one list of 14 numbers — the exact same shape as
-every entry in the 1-million-row reference file from Part 1.
+every entry in the 3-million-row reference file from Part 1.
 
 #### Step 3 — Quantize
 
@@ -270,7 +270,7 @@ both sides need to speak the same "precision dialect."
 #### Step 4 — Search: find the 5 most similar past cases
 
 This is where the k-d tree from Part 1 actually gets used. The app hands it
-the new transaction's 14 numbers and asks: *"of the 1,000,000 entries you
+the new transaction's 14 numbers and asks: *"of the 3,000,000 entries you
 hold, which 5 are numerically closest to this one?"* "Closest" here means
 literal straight-line distance across all 14 numbers at once (the same
 math as distance on a map, just extended from 2 coordinates to 14). The
@@ -328,7 +328,7 @@ flowchart LR
 ```
 
 Both instances are byte-for-byte identical processes, each with its own
-independent copy of the 90MB index loaded into its own memory — there is no
+independent copy of the 270MB index loaded into its own memory — there is no
 shared database and no cross-instance coordination of any kind. This is
 deliberate: since the reference data never changes during a run (Part 1
 happens once, at build time), there's nothing to keep in sync. Either

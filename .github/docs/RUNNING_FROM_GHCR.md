@@ -17,7 +17,7 @@ somewhere that isn't this git repository at all.
 
 ## 1. Get the image reference
 
-Published by `.github/workflows/release.yml` on every version tag:
+Published by `.github/workflows/release.yml` on every push to `main`:
 
 ```
 ghcr.io/kauancarvalho/rinha-de-backend-2026-fraud-detector:latest
@@ -58,7 +58,7 @@ services:
     environment:
       PORT: "9999"
       LOG_LEVEL: "info"
-      KNN_MAX_EXTRA_LEAVES: "2000"
+      KNN_MAX_EXTRA_LEAVES: "5000"
       GOMEMLIMIT: "145MiB"
     ulimits:
       nofile:
@@ -75,7 +75,7 @@ services:
     environment:
       PORT: "9999"
       LOG_LEVEL: "info"
-      KNN_MAX_EXTRA_LEAVES: "2000"
+      KNN_MAX_EXTRA_LEAVES: "5000"
       GOMEMLIMIT: "145MiB"
     ulimits:
       nofile:

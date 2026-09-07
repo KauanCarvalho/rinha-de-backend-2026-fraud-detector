@@ -47,15 +47,14 @@ make load-test      # official test.js — ramps to 1200 req/s over 120s, writes
 `stress-test` is an alias for `load-test`, if that's the name your muscle
 memory reaches for.
 
-Note: `loadtest/fixtures/test-data.json` embeds a
-`references_checksum_sha256` for the dataset its expected answers were
-computed against, and it does not match the dataset currently published at
-`resources/references.json.gz` (confirmed by checksum — the upstream
-dataset was almost certainly reduced after the edition closed). Expect the
-`results.json` detection score to reflect that mismatch rather than a flaw
-in this project's k-NN search; the latency/throughput numbers are
-unaffected by it. See [`RESULTS.md`](RESULTS.md) for what these actually
-measured.
+Note: `resources/references.json.gz` is the real 3,000,000-vector official
+dataset — its checksum matches `loadtest/fixtures/test-data.json`'s
+`references_checksum_sha256` exactly. (The file published on the challenge
+repo's `main` branch is a smaller 1M-vector one that doesn't match; the
+correct 3M file lives on that repo's `tmp` branch instead. See
+[`RESULTS.md`](RESULTS.md#the-dataset-it-really-is-3000000-vectors) for how
+that was found.) With the right dataset, `results.json`'s detection numbers
+reflect actual k-NN search quality, not an answer-key mismatch.
 
 ## Configuration (env vars, see `internal/config`)
 
@@ -64,7 +63,7 @@ measured.
 | `PORT` | `9999` | HTTP listen port |
 | `INDEX_PATH` | `data/index.bin` | path to the pre-built k-d tree |
 | `LOG_LEVEL` | `info` | `debug`\|`info`\|`warn`\|`error` |
-| `KNN_MAX_EXTRA_LEAVES` | `2000` | k-d tree backtracking budget (0 = unbounded/exact) |
+| `KNN_MAX_EXTRA_LEAVES` | `5000` | k-d tree backtracking budget (0 = unbounded/exact — not viable under load, see [`RESULTS.md`](RESULTS.md)) |
 | `READ_TIMEOUT` / `WRITE_TIMEOUT` / `SHUTDOWN_TIMEOUT` | `5s` each | HTTP server timeouts |
 
 Every default is sane enough that the container runs correctly with **no

@@ -42,6 +42,10 @@ make docker-down
 - [**Results**](docs/RESULTS.md) — correctness, test coverage, and
   measured performance (including a real infra bug found and fixed through
   load testing).
+- [**Path to a 6000-point score**](docs/PATH_TO_EXCELLENCE.md) — what it
+  would actually take to close the gap to the scoring ceiling, itemized:
+  what each technique means, what it costs, and why this project stops
+  short of it.
 - [**Project structure**](docs/PROJECT_STRUCTURE.md) — what every
   top-level folder is for.
 

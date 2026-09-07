@@ -54,7 +54,7 @@ flowchart LR
   *"the reference files do not change during the test, so they can be
   pre-processed freely."*
 - **Resource budget** (aggregate across every container, per the
-  challenge's rules): 1 CPU / 350MB. Current split: HAProxy 0.05 CPU/25MB,
+  challenge's rules): 1 CPU / 350MB. Current split: HAProxy 0.05 CPU/30MB,
   each API replica 0.475 CPU/160MB.
 
 ## The k-NN search budget
@@ -65,17 +65,20 @@ in the challenge's
 and implemented in `internal/vectorize` and `internal/knn`. One design
 choice worth calling out: **the k-d tree search is intentionally bounded,
 not exact.** 14 dimensions is past the point where a k-d tree keeps
-meaningful pruning power — an unbounded search degrades toward a
-near-linear scan over the dataset (measured: ~14-29ms per query,
-unacceptable against this challenge's p99 scoring). `KNN_MAX_EXTRA_LEAVES`
+meaningful pruning power over 3,000,000 points — an unbounded search is
+accurate (offline failure rate 0.00%) but does not survive concurrent load:
+at 1200 req/s it produced 84% HTTP timeouts in testing. `KNN_MAX_EXTRA_LEAVES`
 bounds the backtracking budget after an always-unlimited greedy descent to
-a leaf, trading a small amount of recall for sub-millisecond p99. See
-[`RESULTS.md`](RESULTS.md) for the numbers behind that trade.
+a leaf, trading a small amount of recall for a p99 that stays under the
+challenge's 2000ms cutoff. See [`RESULTS.md`](RESULTS.md) for the numbers
+behind that trade — `5000` is what this project ships with.
 
-The currently published `references.json.gz` has 1,000,000 vectors, not the
-3,000,000 described in the docs — almost certainly reduced after the
-edition closed. The code adapts to whatever size is present; nothing is
-hardcoded to 3M.
+`resources/references.json.gz` is the real 3,000,000-vector official
+dataset (see [`RESULTS.md`](RESULTS.md#the-dataset-it-really-is-3000000-vectors)
+for how the correct file was tracked down — the one published on the
+challenge repo's `main` branch is a smaller, checksum-mismatched 1M-vector
+file). The code adapts to whatever size is present at build time; nothing
+is hardcoded to 3M.
 
 ## The Dockerfile
 
