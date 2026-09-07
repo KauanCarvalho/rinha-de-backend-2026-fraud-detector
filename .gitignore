@@ -1,0 +1,21 @@
+# build artifacts
+/bin/
+*.exe
+
+# generated index, built locally via `make index` from the vendored
+# resources/references.json.gz — not the dataset itself, which is committed
+/data/
+
+# k6 load test output (the payload fixtures under loadtest/fixtures/ are
+# vendored and committed on purpose — see .github/docs/PROJECT_STRUCTURE.md)
+/loadtest/test/results.json
+
+# go
+/coverage.out
+/coverage.html
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

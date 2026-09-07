@@ -1,0 +1,80 @@
+services:
+  haproxy:
+    image: haproxy:3.0-alpine
+    container_name: rinha-fraud-lb
+    ports:
+      - "9999:9999"
+    volumes:
+      - ./deployments/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - api1
+      - api2
+    networks:
+      - rinha
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    deploy:
+      resources:
+        limits:
+          cpus: "0.05"
+          memory: "25MB"
+
+  api1:
+    build: .
+    image: rinha-fraud-api:local
+    container_name: rinha-fraud-api1
+    environment:
+      PORT: "9999"
+      LOG_LEVEL: "info"
+      KNN_MAX_EXTRA_LEAVES: "2000"
+      GOMEMLIMIT: "145MiB"
+    networks:
+      - rinha
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    deploy:
+      resources:
+        limits:
+          cpus: "0.475"
+          memory: "160MB"
+
+  api2:
+    build: .
+    image: rinha-fraud-api:local
+    container_name: rinha-fraud-api2
+    environment:
+      PORT: "9999"
+      LOG_LEVEL: "info"
+      KNN_MAX_EXTRA_LEAVES: "2000"
+      GOMEMLIMIT: "145MiB"
+    networks:
+      - rinha
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    deploy:
+      resources:
+        limits:
+          cpus: "0.475"
+          memory: "160MB"
+
+networks:
+  rinha:
+    driver: bridge

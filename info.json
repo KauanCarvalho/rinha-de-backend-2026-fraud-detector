@@ -1,0 +1,15 @@
+{
+  "participants": [
+    "Kauan Carvalho"
+  ],
+  "social": [
+    "https://github.com/KauanCarvalho"
+  ],
+  "source-code-repo": "https://github.com/KauanCarvalho/rinha-de-backend-2026-fraud-detector",
+  "stack": [
+    "go",
+    "haproxy",
+    "docker"
+  ],
+  "open_to_work": false
+}
