@@ -118,6 +118,40 @@ Two things worth calling out:
 
 `KNN_MAX_EXTRA_LEAVES=5000` is the value this project ships with.
 
+## Low-risk optimizations: pre-rendered responses, buffer pooling, GC tuning
+
+[`PATH_TO_EXCELLENCE.md`](PATH_TO_EXCELLENCE.md) itemizes what it would take
+to close the remaining gap to the scoring ceiling. Most of that list trades
+away this project's maintainability goals for latency and was deliberately
+left undone — but one item on it did not require that trade-off, because
+`FraudScore` only ever takes one of `scoring.K+1` = 6 exact values
+(`fraudCount/5` for `fraudCount` in `[0,5]`). That makes three standard,
+idiomatic-Go techniques free wins rather than a maintainability trade:
+
+- **Pre-rendered response bodies** — the 6 possible `/fraud-score` JSON
+  responses are encoded once at package init instead of via
+  `encoding/json`'s reflection-based `Marshal` on every request
+  (`internal/httpapi/handlers.go`).
+- **`sync.Pool` for the request-body buffer** — the buffer used to read
+  each request body is reused across requests instead of allocated fresh
+  every time, always `Reset` before reuse so nothing leaks between
+  requests (verified under `-race` with a concurrent-request test).
+- **GC tuning** — `debug.SetGCPercent(-1)` disables the percentage-growth
+  GC trigger; the `GOMEMLIMIT` already set in `docker-compose.yml` remains
+  as the backstop that still triggers collection under real memory
+  pressure (`cmd/api/main.go`).
+
+None of this touches `net/http`, changes the API contract, or removes a
+single safety net — same measured detection quality, real latency
+improvement:
+
+| | before | after | change |
+|---|---|---|---|
+| p99 | 1274ms | **1174.5ms** | −7.8% |
+| http_errors | 46 | **25** | −46% |
+| failure_rate | 5.32% | **5.27%** | ~flat (as expected — this doesn't touch detection) |
+| final_score | −203.6 | **−155.9** | +23% |
+
 ## Smoke test (official `loadtest/smoke.js`, 1 VU, 5 requests)
 
 ```
@@ -138,7 +172,7 @@ final_score = score_p99 + score_det               , range [-6000, +6000]
 
 The ceiling of `+6000` requires **both** `p99 ≤ 1ms` *and* `E = 0` (zero
 weighted errors). Every 10× improvement in p99 is worth another 1000
-points — going from our measured 1274ms to 1ms would require closing a
+points — going from our measured 1174.5ms to 1ms would require closing a
 ~1000× latency gap, worth roughly +3100 points on its own.
 
 That gap is not a tuning knob, it's an architectural choice. Sustaining
@@ -158,11 +192,13 @@ more-careful version of this one.
 
 This project deliberately does not chase that ceiling (see
 [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md) for why: structured logging,
-idiomatic `net/http`, a maintainable k-d tree, Go's GC left on). With the
-correct 3M dataset and a properly tuned search budget, it clears both hard
-cutoffs comfortably (`failure_rate` 5.32% against a 15% ceiling, p99 1274ms
-against a 2000ms ceiling) and lands at `final_score ≈ -203.6` — far from
-the theoretical ceiling, but for reasons that are now fully measured and
-understood rather than guessed at: the score is dominated by the p99 term,
-and closing that gap further is a rewrite into a fundamentally different
-architecture, not a parameter change.
+idiomatic `net/http`, a maintainable k-d tree). With the correct 3M
+dataset, a properly tuned search budget, and the low-risk optimizations
+above (pre-rendered responses, buffer pooling, GC tuning), it clears both
+hard cutoffs comfortably (`failure_rate` 5.27% against a 15% ceiling, p99
+1174.5ms against a 2000ms ceiling) and lands at `final_score ≈ -155.9` —
+far from the theoretical ceiling, but for reasons that are now fully
+measured and understood rather than guessed at: the score is dominated by
+the p99 term, and closing that gap further ([`PATH_TO_EXCELLENCE.md`](PATH_TO_EXCELLENCE.md))
+is a rewrite into a fundamentally different architecture, not a parameter
+change.

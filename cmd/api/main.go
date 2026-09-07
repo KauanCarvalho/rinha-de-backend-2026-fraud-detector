@@ -28,6 +28,14 @@ func main() {
 }
 
 func run() int {
+	// GOMEMLIMIT (set via env in production, see docker-compose.yml) is the
+	// backstop: the runtime still triggers GC as that soft memory limit is
+	// approached, regardless of this setting. Disabling the percentage-based
+	// trigger on top of that avoids GC cycles driven by heap-growth ratio
+	// instead of actual memory pressure, which otherwise shows up as
+	// latency-tail noise under sustained request load.
+	debug.SetGCPercent(-1)
+
 	cfg := config.Load()
 	logger := observability.NewLogger(cfg.LogLevel)
 

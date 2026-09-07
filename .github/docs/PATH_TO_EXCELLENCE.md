@@ -2,7 +2,7 @@
 
 [`RESULTS.md`](RESULTS.md#why-the-winning-solutions-score-close-to-the-6000-point-ceiling)
 shows the scoring formula and where this project actually lands
-(`final_score ≈ -203.6`, dominated by the p99 term). This document is the
+(`final_score ≈ -155.9`, dominated by the p99 term). This document is the
 follow-up to the obvious next question: **what would it actually take to
 close that gap?** Not as a to-do list this project intends to execute —
 that would contradict the whole premise in
@@ -18,7 +18,7 @@ score_det = 1000 · log10(1/ε) − 300·log10(1+E)      ceiling ~+3000 at E = 0
 final_score = score_p99 + score_det                 range [-6000, +6000]
 ```
 
-Measured today: `p99 = 1274ms` → `score_p99 = -105.2`. To reach the +3000
+Measured today: `p99 = 1174.5ms` → `score_p99 = -69.9`. To reach the +3000
 ceiling requires `p99 ≤ 1ms` — roughly **three orders of magnitude** faster,
 sustained at 1200 req/s on 0.475 vCPU per replica. That budget leaves well
 under a millisecond of wall-clock time per request for *everything*:
@@ -31,33 +31,17 @@ tiny but collectively larger than the whole budget.
 Below is what each of those layers would be replaced with, in order of the
 return it buys.
 
-## 1. Stop allocating on the hot path
+> **Note:** an earlier version of this list had "stop allocating on the hot
+> path" here — pre-rendered response bodies, a `sync.Pool`'d request buffer,
+> and `debug.SetGCPercent(-1)`. That one turned out not to require the
+> maintainability trade-off the rest of this document is about: this API's
+> response space is exactly 6 fixed JSON bodies, so pre-rendering them is a
+> free win, not a readability sacrifice. All three are implemented — see
+> [`RESULTS.md`](RESULTS.md#low-risk-optimizations-pre-rendered-responses-buffer-pooling-gc-tuning)
+> for what they measurably bought (p99 −7.8%, http_errors −46%) and why the
+> rest of this list is a different category of trade-off.
 
-**What it means:** every `make([]byte, ...)`, every `fmt.Sprintf`, every
-interface boxing, every slice that grows past its capacity, hands work to
-Go's garbage collector. Under sustained load, GC pauses (even sub-millisecond
-ones) show up directly in the p99 tail, because p99 is exactly the
-percentile GC pauses land in.
-
-**What to do:**
-- Pre-allocate and reuse buffers with `sync.Pool` for request/response
-  bodies instead of allocating per request.
-- Replace `encoding/json` (which allocates heavily via reflection) with a
-  hand-written encoder/decoder for the two fixed message shapes this API
-  has, or a code-generated one (`easyjson`, `ffjson`).
-- Pre-render the static parts of the response (`{"approved":`) as a byte
-  literal and only format the two variable fields.
-- `debug.SetGCPercent(-1)` to disable the garbage collector outright, paired
-  with `debug.SetMemoryLimit(...)` as a backstop so it still collects before
-  hitting the container's memory limit. This is what "no GC" means in
-  practice — not literally never collecting, but only collecting under
-  memory pressure instead of on a percentage-growth schedule.
-
-**Cost:** loses most of the readability and safety `encoding/json` and
-ordinary GC-managed code give for free. Every buffer's lifetime becomes the
-programmer's responsibility to reason about instead of the runtime's.
-
-## 2. Bypass `net/http`
+## 1. Bypass `net/http`
 
 **What it means:** Go's `net/http` server is general-purpose — it supports
 HTTP/1.1 and HTTP/2, chunked transfer, arbitrary headers, keep-alive
@@ -79,7 +63,7 @@ you have to write and maintain yourself. This is the single largest
 "bit-mining" investment on the list — most of the winning repos' custom
 epoll loops live here.
 
-## 3. SIMD the distance computation
+## 2. SIMD the distance computation
 
 **What it means:** computing a Euclidean distance between two 14-dimension
 vectors is 14 multiplications and 14 additions. A CPU's SIMD instructions
@@ -97,9 +81,9 @@ rewritten to operate on 4 or 8 `int16` lanes at once instead of a plain
 change between minor releases, and code that uses it needs a fallback path
 for CPUs without AVX2. It also only helps the actual distance-computation
 inner loop; for this project's data shape, most p99 cost is elsewhere
-(scheduling, allocation, HTTP), so on its own this buys less than #1 or #2.
+(scheduling, allocation, HTTP), so on its own this buys less than #1.
 
-## 4. A search structure built for this dimensionality
+## 3. A search structure built for this dimensionality
 
 **What it means:** [`RESULTS.md`](RESULTS.md#in-process-k-d-tree-why-a-search-budget-exists-at-3m-vectors)
 already shows the k-d tree's pruning power degrades at 14 dimensions —
@@ -125,7 +109,7 @@ convergence and initialization concerns), and IVF trades away the
 guarantee of exact nearest neighbors that the k-d tree with a large enough
 budget still gives.
 
-## 5. A leaner load balancer
+## 4. A leaner load balancer
 
 **What it means:** HAProxy is general-purpose — TLS termination, HTTP
 parsing, ACLs, and a config language this project never uses beyond plain
@@ -147,14 +131,14 @@ risk with no functional upside beyond shaving microseconds.
 ## Why this project stops here
 
 Every item above trades a specific piece of Go's ordinary safety net
-(GC, `net/http`'s protocol handling, exact search, a battle-tested proxy)
-for latency headroom this challenge's scoring formula rewards on a
-logarithmic curve. That trade is legitimate engineering — it is exactly
-what the winning repos did, and the reasoning above should make clear it
-is not "cheating" or unfair, just a different set of priorities. This
-project's stated goal from the start was a production-shaped,
-maintainable Go service, not a maximum-score entry in a closed
-competition — see [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md#why-this-isnt-a-bit-mining-exercise).
-The gap between `-203.6` and `+6000` is now fully measured and explained
-rather than mysterious; closing it is a rewrite into a different kind of
-project, not a backlog for this one.
+(`net/http`'s protocol handling, a stable public API, the exact-search
+guarantee, a battle-tested proxy) for latency headroom this challenge's
+scoring formula rewards on a logarithmic curve. That trade is legitimate
+engineering — it is exactly what the winning repos did, and the reasoning
+above should make clear it is not "cheating" or unfair, just a different
+set of priorities. This project's stated goal from the start was a
+production-shaped, maintainable Go service, not a maximum-score entry in a
+closed competition — see [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md#why-this-isnt-a-bit-mining-exercise).
+The gap between `-155.9` and `+6000` is now fully measured and explained
+rather than mysterious; closing the rest of it is a rewrite into a
+different kind of project, not a backlog for this one.
