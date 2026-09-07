@@ -1,3 +1,11 @@
+# Adapted from the official test/docker-compose.yml: dropped storage_opt
+# (size: "1T" on both services below) — it requires the overlay2 driver on
+# an XFS filesystem with the pquota mount option, which most hosts
+# (including GitHub Actions' standard ext4 runners) don't have, so `docker
+# compose up` fails outright with "Error response from daemon: --storage-opt
+# is supported only for overlay over xfs with 'pquota' mount option" before
+# the container is even created. Not needed for a load test's own storage
+# footprint (k6 writes almost nothing to its own filesystem).
 services:
   k6:
     image: grafana/k6:latest
@@ -16,8 +24,6 @@ services:
         limits:
           cpus: "2.0"
           memory: 8G
-    storage_opt:
-      size: "1T"
 
   k6-smoke:
     image: grafana/k6:latest
@@ -36,5 +42,3 @@ services:
         limits:
           cpus: "2.0"
           memory: 8G
-    storage_opt:
-      size: "1T"
