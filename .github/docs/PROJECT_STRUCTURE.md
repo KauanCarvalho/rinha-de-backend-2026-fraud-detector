@@ -86,8 +86,7 @@ The official k6 scripts from `zanfranceschi/rinha-de-backend-2026`
 here so performance can be measured locally without hunting down the
 upstream repo. `loadtest/fixtures/test-data.json` is the official
 pre-labeled test payload set (~25MB) — committed on purpose, so the repo is
-self-contained; refresh it from upstream with `make load-data` if it ever
-changes.
+self-contained.
 
 ## `resources/`
 
@@ -96,8 +95,7 @@ never depends on the network to fetch them (the same reasoning as
 `loadtest/fixtures/`):
 
 - **`references.json.gz`** — the actual reference dataset `cmd/indexbuilder`
-  builds the k-d tree from. Refresh it from upstream with
-  `make update-dataset` if it ever changes.
+  builds the k-d tree from.
 - **`example-payloads.json`** — used by manual testing and `e2e/`.
 - **`example-references.json`** — a small excerpt of the reference dataset
   format, per `docs/en/DATASET.md`, handy for quick inspection.

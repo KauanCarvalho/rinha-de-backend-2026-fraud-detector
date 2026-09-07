@@ -10,8 +10,7 @@ make docker-down
 
 The reference dataset (`resources/references.json.gz`) is vendored and
 committed, same as `loadtest/fixtures/test-data.json` — the build never
-needs network access to fetch it (`make update-dataset` refreshes it from
-upstream if it ever changes). See
+needs network access to fetch it. See
 [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md) for the full Dockerfile rationale.
 
 Want to run it on another machine using **only the published image** — no
@@ -43,7 +42,6 @@ go — the same checks `.github/workflows/ci.yml` runs on every push.
 make docker-up
 make load-smoke     # official smoke.js — quick sanity check
 make load-test      # official test.js — ramps to 1200 req/s over 120s, writes loadtest/test/results.json
-make load-data      # optional: refresh loadtest/fixtures/test-data.json from upstream
 ```
 
 `stress-test` is an alias for `load-test`, if that's the name your muscle
