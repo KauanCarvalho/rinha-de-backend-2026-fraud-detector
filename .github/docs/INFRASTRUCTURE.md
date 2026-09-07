@@ -62,16 +62,31 @@ flowchart LR
 The 14-dimension vectorization and the k-NN decision are specified exactly
 in the challenge's
 [`DETECTION_RULES.md`](https://github.com/zanfranceschi/rinha-de-backend-2026/blob/main/docs/en/DETECTION_RULES.md)
-and implemented in `internal/vectorize` and `internal/knn`. One design
-choice worth calling out: **the k-d tree search is intentionally bounded,
-not exact.** 14 dimensions is past the point where a k-d tree keeps
-meaningful pruning power over 3,000,000 points — an unbounded search is
-accurate (offline failure rate 0.00%) but does not survive concurrent load:
-at 1200 req/s it produced 84% HTTP timeouts in testing. `KNN_MAX_EXTRA_LEAVES`
-bounds the backtracking budget after an always-unlimited greedy descent to
-a leaf, trading a small amount of recall for a p99 that stays under the
-challenge's 2000ms cutoff. See [`RESULTS.md`](RESULTS.md) for the numbers
-behind that trade — `5000` is what this project ships with.
+and implemented in `internal/vectorize` and `internal/knn`. Two design
+choices work together here:
+
+1. **Categorical-tag partitioning.** Four of the 14 dimensions are already
+   boolean-valued or have a sentinel for "absent" (`is_online`,
+   `card_present`, `unknown_merchant`, whether `last_transaction` was
+   present). `internal/knn.Tag` derives a 4-bit key from these, and
+   `internal/knn.PartitionedIndex` builds one k-d tree per non-empty tag
+   (12, on the real dataset) instead of a single 3,000,000-vector tree. A
+   query is routed to just its own partition's tree — the reference set
+   never needs comparing against tag combinations it structurally can't
+   match.
+2. **The k-d tree search within a partition is intentionally bounded, not
+   exact.** 14 dimensions is past the point where a k-d tree keeps
+   meaningful pruning power, even at a partition's smaller scale — an
+   unbounded search is accurate (offline failure rate 0.00%) but does not
+   survive concurrent load: at 1200 req/s it produced 84% HTTP timeouts in
+   testing. `KNN_MAX_EXTRA_LEAVES` bounds the backtracking budget after an
+   always-unlimited greedy descent to a leaf, trading a small amount of
+   recall for a p99 that stays under the challenge's 2000ms cutoff.
+
+See [`RESULTS.md`](RESULTS.md#categorical-tag-partitioning) for the
+partitioning numbers and [`RESULTS.md`](RESULTS.md#re-tuning-the-search-budget-for-the-partitioned-index)
+for how the budget was re-tuned afterward — `1000` is what this project
+ships with today.
 
 `resources/references.json.gz` is the real 3,000,000-vector official
 dataset (see [`RESULTS.md`](RESULTS.md#the-dataset-it-really-is-3000000-vectors)

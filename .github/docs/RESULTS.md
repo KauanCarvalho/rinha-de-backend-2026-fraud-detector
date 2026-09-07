@@ -116,7 +116,9 @@ Two things worth calling out:
    monotonically improve real-world outcomes once it pushes latency across
    a hard threshold.
 
-`KNN_MAX_EXTRA_LEAVES=5000` is the value this project ships with.
+`KNN_MAX_EXTRA_LEAVES=5000` was the value this project shipped with at
+this point — before categorical-tag partitioning changed the picture
+again, see below.
 
 ## Low-risk optimizations: pre-rendered responses, buffer pooling, GC tuning
 
@@ -197,12 +199,34 @@ Full load test, `KNN_MAX_EXTRA_LEAVES=5000` unchanged, partitioned index:
 
 Detection improved dramatically — enough to flip `final_score` positive
 for the first time — but p99 got worse, not better, even though each
-partition's tree is roughly 16× smaller. `5000` is now demonstrably more
-budget than any partition needs (identical accuracy to `8000` above), so
-some of that regression is almost certainly wasted backtracking on the
-larger partitions; a smaller budget tuned specifically for the
-partitioned index is the obvious next measurement, not yet done as of this
-writing.
+partition's tree is roughly 16× smaller on average. Why: the 12 non-empty
+partitions are far from evenly sized — the largest single tag holds
+**33%** of all 3M vectors (the smallest holds 0.14%) — so a fixed
+`maxExtraLeaves` budget is now a *larger fraction* of the biggest,
+highest-traffic partition's tree than it was of the full unpartitioned
+tree (`5000 / ~31,000 leaves` in that one partition vs. `5000 / ~93,750
+leaves` before), meaning most queries now do proportionally *more*
+backtracking than before, not less.
+
+### Re-tuning the search budget for the partitioned index
+
+Re-sweeping `KNN_MAX_EXTRA_LEAVES` against the partitioned index (real
+load test each time) confirms this and finds a new, much lower optimum:
+
+| `KNN_MAX_EXTRA_LEAVES` | p99 | failure_rate | detection_score | final_score |
+|---|---|---|---|---|
+| `5000` (old default) | 1644.6ms | 1.68% | +258.8 | +42.7 |
+| `2000` | 1401.5ms | 2.05% | +301.1 | **+154.5** |
+| `1000` (chosen) | **1275.9ms** | 2.08% | **+320.3** | **+214.5** |
+| `500` | 1485.5ms | 3.86% | +3.8 | −168.1 |
+
+`1000` is the sweet spot found: better than `5000` on every single metric
+(p99, failure_rate, *and* detection_score all improve together), and
+better than `500` on every metric too — below `1000`, p99 stops improving
+(it's dominated by fixed costs — HTTP, GC, network — once search itself is
+cheap enough) while detection keeps getting worse, a strictly bad trade in
+both directions. `KNN_MAX_EXTRA_LEAVES=1000` is the value this project
+ships with.
 
 ## Smoke test (official `loadtest/smoke.js`, 1 VU, 5 requests)
 
@@ -224,8 +248,8 @@ final_score = score_p99 + score_det               , range [-6000, +6000]
 
 The ceiling of `+6000` requires **both** `p99 ≤ 1ms` *and* `E = 0` (zero
 weighted errors). Every 10× improvement in p99 is worth another 1000
-points — going from our measured 1644.6ms to 1ms would require closing a
-~1600× latency gap, worth roughly +3200 points on its own.
+points — going from our measured 1275.9ms to 1ms would require closing a
+~1300× latency gap, worth roughly +3100 points on its own.
 
 That gap is not a tuning knob, it's an architectural choice. Sustaining
 sub-millisecond p99 at 1200 req/s on 0.475 vCPU per replica means the
@@ -248,8 +272,8 @@ idiomatic `net/http`, a maintainable k-d tree). With the correct 3M
 dataset, a properly tuned search budget, the low-risk optimizations above
 (pre-rendered responses, buffer pooling, GC tuning), and categorical-tag
 partitioning, it clears both hard cutoffs comfortably (`failure_rate`
-1.68% against a 15% ceiling, p99 1644.6ms against a 2000ms ceiling) and
-lands at `final_score ≈ +42.7` — positive for the first time, though still
+2.08% against a 15% ceiling, p99 1275.9ms against a 2000ms ceiling) and
+lands at `final_score ≈ +214.5` — positive and the best measured so far, though still
 far from the theoretical ceiling, for reasons that are now fully measured
 and understood rather than guessed at: the score is dominated by the p99
 term, and closing that gap further ([`PATH_TO_EXCELLENCE.md`](PATH_TO_EXCELLENCE.md))

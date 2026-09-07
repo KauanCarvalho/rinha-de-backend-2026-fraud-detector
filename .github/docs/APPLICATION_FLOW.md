@@ -70,7 +70,7 @@ and does three things to that ledger:
 flowchart TD
     A[references.json.gz<br/>~50MB compressed] -->|"1: decompress + read,<br/>one entry at a time<br/>(internal/dataset)"| B["3,000,000 vectors<br/>+ 3,000,000 labels<br/>in memory"]
     B -->|"2: quantize<br/>(internal/knn.Quantize)"| C["same numbers,<br/>compressed to int16<br/>~270MB instead of ~840MB"]
-    C -->|"3: build k-d tree<br/>(internal/knn.Build)"| D["index.bin<br/>~118MB, organized<br/>for fast search"]
+    C -->|"3: split into up to 16 groups,<br/>build one k-d tree per group<br/>(internal/knn.BuildPartitioned)"| D["index.bin<br/>~118MB, organized<br/>for fast search"]
 ```
 
 **Step 1 — read.** Each of the 3M lines is parsed one at a time (never all
@@ -127,17 +127,39 @@ there are few "dimensions" (few numbers per point). This app's points have
 **14** numbers each, which is enough that the dictionary trick stops being
 perfectly efficient — it still massively narrows things down, but the code
 also puts a hard cap on how much extra digging it's allowed to do per
-search (`KNN_MAX_EXTRA_LEAVES`, default 5000), so that even a hard case
+search (`KNN_MAX_EXTRA_LEAVES`, default 1000), so that even a hard case
 never blows past a predictable time budget. It's the difference between "I
 will spend as long as it takes to be 100% certain" and "I will spend at
 most this long, and take the best answer I've found by then." In practice
 that difference is basically never wrong — see
 [`RESULTS.md`](RESULTS.md) for the actual measured numbers.
 
-The output of all three steps is a single file, `index.bin`, containing the
-whole organized structure. That file gets baked directly into the Docker
-image (see [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md)) — the running
-application never touches `references.json.gz` at all.
+### An extra trick before the tree: splitting by a coarse tag first
+
+Before any of the 3 million points even reach a k-d tree, they're split
+into up to 16 separate groups by a much simpler rule: 4 of the 14 numbers
+are already yes/no answers (was the terminal online? was the card
+physically present? is this an unfamiliar merchant? did this customer have
+a previous transaction at all?). Combine those 4 yes/no answers and there
+are only 16 possible combinations — think of it like a library that first
+splits every book by language before alphabetizing within each language
+section: a French dictionary lookup never has to page through the English
+section at all.
+
+Each of those up to 16 groups gets its *own*, smaller k-d tree (the real
+dataset produces 12 non-empty groups). A new transaction's own yes/no
+answers pick which group's tree it searches — it never even looks at
+reference transactions from a different combination of those 4 answers.
+This is a real, measured improvement, not just theory — see
+[`RESULTS.md`](RESULTS.md#categorical-tag-partitioning) for exactly how
+much it helped and one surprise it caused (some groups turned out to hold
+far more transactions than others).
+
+The output of all these steps is a single file, `index.bin`, containing
+the whole organized structure — all 12 group-trees together. That file
+gets baked directly into the Docker image (see
+[`INFRASTRUCTURE.md`](INFRASTRUCTURE.md)) — the running application never
+touches `references.json.gz` at all.
 
 ---
 
@@ -269,9 +291,13 @@ both sides need to speak the same "precision dialect."
 
 #### Step 4 — Search: find the 5 most similar past cases
 
-This is where the k-d tree from Part 1 actually gets used. The app hands it
-the new transaction's 14 numbers and asks: *"of the 3,000,000 entries you
-hold, which 5 are numerically closest to this one?"* "Closest" here means
+This is where the group-trees from Part 1 actually get used. The app looks
+at this transaction's own 4 yes/no answers (online? card present? unknown
+merchant? has a previous transaction?) to pick which of the up to 16
+groups to search — the same rule used to build the groups in the first
+place — then hands that one group's k-d tree the new transaction's 14
+numbers and asks: *"of the entries you hold, which 5 are numerically
+closest to this one?"* "Closest" here means
 literal straight-line distance across all 14 numbers at once (the same
 math as distance on a map, just extended from 2 coordinates to 14). The
 search returns those 5 entries — specifically, their fraud/legit labels;

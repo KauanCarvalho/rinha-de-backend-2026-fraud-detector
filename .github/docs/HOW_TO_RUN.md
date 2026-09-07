@@ -63,7 +63,7 @@ reflect actual k-NN search quality, not an answer-key mismatch.
 | `PORT` | `9999` | HTTP listen port |
 | `INDEX_PATH` | `data/index.bin` | path to the pre-built k-d tree |
 | `LOG_LEVEL` | `info` | `debug`\|`info`\|`warn`\|`error` |
-| `KNN_MAX_EXTRA_LEAVES` | `5000` | k-d tree backtracking budget (0 = unbounded/exact — not viable under load, see [`RESULTS.md`](RESULTS.md)) |
+| `KNN_MAX_EXTRA_LEAVES` | `1000` | k-d tree backtracking budget (0 = unbounded/exact — not viable under load, see [`RESULTS.md`](RESULTS.md)) |
 | `READ_TIMEOUT` / `WRITE_TIMEOUT` / `SHUTDOWN_TIMEOUT` | `5s` each | HTTP server timeouts |
 
 Every default is sane enough that the container runs correctly with **no

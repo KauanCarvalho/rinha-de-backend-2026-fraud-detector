@@ -2,7 +2,7 @@
 
 [`RESULTS.md`](RESULTS.md#why-the-winning-solutions-score-close-to-the-6000-point-ceiling)
 shows the scoring formula and where this project actually lands
-(`final_score ≈ +42.7`, positive for the first time — still dominated by
+(`final_score ≈ +214.5`, positive and the best measured so far — still dominated by
 the p99 term). This document is the
 follow-up to the obvious next question: **what would it actually take to
 close that gap?** Not as a to-do list this project intends to execute —
@@ -19,7 +19,7 @@ score_det = 1000 · log10(1/ε) − 300·log10(1+E)      ceiling ~+3000 at E = 0
 final_score = score_p99 + score_det                 range [-6000, +6000]
 ```
 
-Measured today: `p99 = 1644.6ms` → `score_p99 = -216.1`. To reach the +3000
+Measured today: `p99 = 1275.9ms` → `score_p99 = -105.8`. To reach the +3000
 ceiling requires `p99 ≤ 1ms` — roughly **three orders of magnitude** faster,
 sustained at 1200 req/s on 0.475 vCPU per replica. That budget leaves well
 under a millisecond of wall-clock time per request for *everything*:
@@ -51,8 +51,9 @@ return it buys.
 > not an approximation technique with its own tuning parameters like IVF
 > or SIMD — no assembly, no custom event loop. Measured effect: offline
 > failure rate at `KNN_MAX_EXTRA_LEAVES=5000` dropped from 5.3% to 1.11%,
-> and `final_score` under the real load test went from −155.9 to **+42.7**
-> — positive for the first time. See
+> and `final_score` under the real load test went from −155.9 to **+214.5**
+> (best result measured so far) once `KNN_MAX_EXTRA_LEAVES` was re-tuned to
+> `1000` for the new, partitioned index. See
 > [`RESULTS.md`](RESULTS.md#categorical-tag-partitioning) for the full
 > numbers. Item 3 below (IVF/VP-tree) would now apply *inside* each of
 > these already-smaller partitions, compounding rather than competing with
@@ -156,6 +157,6 @@ above should make clear it is not "cheating" or unfair, just a different
 set of priorities. This project's stated goal from the start was a
 production-shaped, maintainable Go service, not a maximum-score entry in a
 closed competition — see [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md#why-this-isnt-a-bit-mining-exercise).
-The gap between `+42.7` and `+6000` is now fully measured and explained
+The gap between `+214.5` and `+6000` is now fully measured and explained
 rather than mysterious; closing the rest of it is a rewrite into a
 different kind of project, not a backlog for this one.

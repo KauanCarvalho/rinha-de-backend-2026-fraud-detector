@@ -17,7 +17,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "9999", cfg.Port)
 	assert.Equal(t, "data/index.bin", cfg.IndexPath)
 	assert.Equal(t, "info", cfg.LogLevel)
-	assert.Equal(t, 5000, cfg.KNNMaxExtraLeaves)
+	assert.Equal(t, 1000, cfg.KNNMaxExtraLeaves)
 	assert.Equal(t, 5*time.Second, cfg.ReadTimeout)
 	assert.Equal(t, 5*time.Second, cfg.WriteTimeout)
 	assert.Equal(t, 5*time.Second, cfg.ShutdownTimeout)
@@ -49,6 +49,6 @@ func TestLoad_InvalidNumericEnvFallsBackToDefault(t *testing.T) {
 
 	cfg := config.Load()
 
-	assert.Equal(t, 5000, cfg.KNNMaxExtraLeaves)
+	assert.Equal(t, 1000, cfg.KNNMaxExtraLeaves)
 	assert.Equal(t, 5*time.Second, cfg.ReadTimeout)
 }

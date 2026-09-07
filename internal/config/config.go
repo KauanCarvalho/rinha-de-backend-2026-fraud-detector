@@ -10,7 +10,7 @@ const (
 	defaultPort              = "9999"
 	defaultIndexPath         = "data/index.bin"
 	defaultLogLevel          = "info"
-	defaultKNNMaxExtraLeaves = 5000
+	defaultKNNMaxExtraLeaves = 1000
 	defaultTimeout           = 5 * time.Second
 )
 
